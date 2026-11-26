@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { Link, useLocation } from 'react-router'
-import { Check, CloudOff, Heart, Plane, Plus } from 'lucide-react'
+import { Check, CloudOff, Heart, Info, Plane, Plus } from 'lucide-react'
 import { useAuth } from '@/auth/auth-context'
 import { AppHeader } from '@/components/AppHeader'
 import { StateCard } from '@/components/StateCard'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { listTrips, type Trip } from '@/lib/api'
 import { gsap, useGSAP } from '@/lib/gsap'
 import { useAfter } from '@/lib/useAfter'
+import { INVITATION_GONE } from '@/lib/messages'
 
 // The Album's entrances play once per visit to the app, not on every return from a Trip page.
 let albumEntered = false
@@ -26,6 +27,8 @@ export function AlbumPage() {
   const [deleted, setDeleted] = useState<string | null>(
     () => (location.state as { deleted?: string } | null)?.deleted ?? null,
   )
+  // Set by the InvitationGate when the Invitation said "Sí" to no longer exists (MASTER section 50).
+  const invitationGone = (location.state as { invitationGone?: boolean } | null)?.invitationGone === true
   const ready = load.status === 'ready'
   const hasTrips = ready && load.trips.length > 0
 
@@ -135,6 +138,15 @@ export function AlbumPage() {
           >
             <Check aria-hidden="true" className="size-4 shrink-0" />
             Hemos borrado «{deleted}» del álbum.
+          </p>
+        )}
+        {invitationGone && (
+          <p
+            role="status"
+            className="mx-auto mt-8 flex w-fit max-w-full items-center gap-2 rounded-full bg-secondary px-4 py-2 text-[15px] text-secondary-foreground"
+          >
+            <Info aria-hidden="true" className="size-4 shrink-0" />
+            {INVITATION_GONE}
           </p>
         )}
 

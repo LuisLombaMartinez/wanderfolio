@@ -41,6 +41,11 @@ type Store interface {
 	DeletePhoto(ctx context.Context, tripID, id string) error
 	ListPhotoIDs(ctx context.Context, tripID string) ([]string, error)
 	DeletePhotos(ctx context.Context, tripID string, ids []string) error
+	OtherMember(ctx context.Context, id string) (store.Member, error)
+	CreateTripWithInvitation(ctx context.Context, t store.Trip, inv store.Invitation) (store.Trip, store.Invitation, error)
+	GetInvitation(ctx context.Context, tripID string) (store.Invitation, error)
+	ListPendingInvitations(ctx context.Context, inviteeID string) ([]store.Invitation, error)
+	AcceptInvitation(ctx context.Context, tripID string) (store.Invitation, error)
 }
 
 // Workflow starts the photo-processing workflow.
@@ -103,6 +108,8 @@ func NewServer(d Deps) http.Handler {
 	mux.HandleFunc("PATCH /api/trips/{id}/photos/{photoId}", s.withMember(s.setCaption))
 	mux.HandleFunc("DELETE /api/trips/{id}/photos/{photoId}", s.withMember(s.deletePhoto))
 	mux.HandleFunc("POST /api/media-session", s.withMember(s.mediaSession))
+	mux.HandleFunc("GET /api/invitations/pending", s.withMember(s.listPendingInvitations))
+	mux.HandleFunc("POST /api/trips/{id}/invitation/accept", s.withMember(s.acceptInvitation))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not-found", "no such route")
 	})
@@ -169,6 +176,8 @@ type coverPhotoJSON struct {
 type tripDetailJSON struct {
 	tripJSON
 	Photos []photoJSON `json:"photos"`
+	// Invitation is the Trip's Invitation when the caller may read it (see invitationFor); null otherwise.
+	Invitation *invitationJSON `json:"invitation"`
 }
 
 func newCover(p store.Photo, chosen bool) *coverPhotoJSON {
@@ -212,7 +221,7 @@ func toTripDetailJSON(t store.Trip, photos []store.Photo, names map[string]strin
 	return d
 }
 
-func (s *server) listTrips(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) listTrips(w http.ResponseWriter, r *http.Request, m store.Member) {
 	trips, err := s.store.ListTrips(r.Context())
 	if err != nil {
 		internalError(w, r, err)
@@ -220,6 +229,9 @@ func (s *server) listTrips(w http.ResponseWriter, r *http.Request, _ store.Membe
 	}
 	out := make([]tripJSON, 0, len(trips))
 	for _, t := range trips {
+		if !t.VisibleTo(m.ID) {
+			continue
+		}
 		photos, err := s.store.ListPhotoSummaries(r.Context(), t.ID)
 		if err != nil {
 			internalError(w, r, err)
@@ -274,28 +286,33 @@ type tripInput struct {
 	StartDate   string `json:"startDate"`
 	EndDate     string `json:"endDate"`
 	Description string `json:"description"`
+	// Invitation is accepted only on POST: an Invitation can only be added when its Trip is created.
+	Invitation *invitationInput `json:"invitation"`
 }
 
 // readTrip decodes and validates a Trip body, writing the error response itself on failure.
-func readTrip(w http.ResponseWriter, r *http.Request) (store.Trip, bool) {
+func readTrip(w http.ResponseWriter, r *http.Request) (store.Trip, *invitationInput, bool) {
 	var in tripInput
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid-body", "the request body is not valid JSON")
-		return store.Trip{}, false
+		return store.Trip{}, nil, false
 	}
 	// Anything after the first JSON value is refused.
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid-body", "the request body must be a single JSON object")
-		return store.Trip{}, false
+		return store.Trip{}, nil, false
 	}
 	t, code, msg := validateTrip(in)
+	if code == "" && in.Invitation != nil {
+		in.Invitation.Question, code, msg = validateQuestion(in.Invitation.Question)
+	}
 	if code != "" {
 		writeError(w, http.StatusUnprocessableEntity, code, msg)
-		return store.Trip{}, false
+		return store.Trip{}, nil, false
 	}
-	return t, true
+	return t, in.Invitation, true
 }
 
 // validateTrip trims and checks a Trip body. It returns the Trip, or an error code and
@@ -343,6 +360,17 @@ func hasControl(s, allowed string) bool {
 	return false
 }
 
+// hasInvisible reports whether s has an invisible format or line-separator character:
+// zero-width characters, bidi overrides (Cf), U+2028 and U+2029 (Zl, Zp).
+func hasInvisible(s string) bool {
+	for _, r := range s {
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return true
+		}
+	}
+	return false
+}
+
 // validID reports whether id looks like an id the store generates (32 hex chars).
 func validID(id string) bool {
 	if len(id) != 32 {
@@ -360,9 +388,13 @@ func tripNotFound(w http.ResponseWriter) {
 	writeError(w, http.StatusNotFound, "trip-not-found", "no such Trip")
 }
 
-func (s *server) createTrip(w http.ResponseWriter, r *http.Request, _ store.Member) {
-	t, ok := readTrip(w, r)
+func (s *server) createTrip(w http.ResponseWriter, r *http.Request, m store.Member) {
+	t, inv, ok := readTrip(w, r)
 	if !ok {
+		return
+	}
+	if inv != nil {
+		s.createTripWithInvitation(w, r, m, t, inv.Question)
 		return
 	}
 	created, err := s.store.CreateTrip(r.Context(), t)
@@ -373,20 +405,20 @@ func (s *server) createTrip(w http.ResponseWriter, r *http.Request, _ store.Memb
 	writeJSON(w, http.StatusCreated, toTripDetailJSON(created, nil, nil))
 }
 
-func (s *server) getTrip(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) getTrip(w http.ResponseWriter, r *http.Request, m store.Member) {
 	if !validID(r.PathValue("id")) {
 		tripNotFound(w)
 		return
 	}
-	t, err := s.store.GetTrip(r.Context(), r.PathValue("id"))
+	t, err := s.visibleTrip(r.Context(), r.PathValue("id"), m)
 	if s.tripError(w, r, err) {
 		return
 	}
-	s.writeTrip(w, r, t)
+	s.writeTrip(w, r, t, m)
 }
 
-// writeTrip answers 200 with the Trip and its Photos.
-func (s *server) writeTrip(w http.ResponseWriter, r *http.Request, t store.Trip) {
+// writeTrip answers 200 with the Trip, its Photos and, when the Member may read it, its Invitation.
+func (s *server) writeTrip(w http.ResponseWriter, r *http.Request, t store.Trip, m store.Member) {
 	photos, err := s.store.ListPhotos(r.Context(), t.ID)
 	if err != nil {
 		internalError(w, r, err)
@@ -397,30 +429,50 @@ func (s *server) writeTrip(w http.ResponseWriter, r *http.Request, t store.Trip)
 		internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toTripDetailJSON(t, photos, names))
+	inv, err := s.invitationFor(r.Context(), t.ID, m)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	d := toTripDetailJSON(t, photos, names)
+	d.Invitation = inv
+	writeJSON(w, http.StatusOK, d)
 }
 
-func (s *server) updateTrip(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) updateTrip(w http.ResponseWriter, r *http.Request, m store.Member) {
 	if !validID(r.PathValue("id")) {
 		tripNotFound(w)
 		return
 	}
-	t, ok := readTrip(w, r)
+	t, inv, ok := readTrip(w, r)
 	if !ok {
 		return
 	}
+	if inv != nil {
+		// Adding one now would hide a Trip the other Member has already seen.
+		writeError(w, http.StatusUnprocessableEntity, "invitation-on-existing-trip",
+			"an Invitation can only be added when its Trip is created")
+		return
+	}
 	t.ID = r.PathValue("id")
+	// A Trip hidden from the Member by a Pending Invitation looks missing.
+	if _, err := s.visibleTrip(r.Context(), t.ID, m); s.tripError(w, r, err) {
+		return
+	}
 	// UpdateTrip returns the stored Trip, including the Cover photo choice it leaves alone.
 	updated, err := s.store.UpdateTrip(r.Context(), t)
 	if s.tripError(w, r, err) {
 		return
 	}
-	s.writeTrip(w, r, updated)
+	s.writeTrip(w, r, updated, m)
 }
 
-func (s *server) deleteTrip(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) deleteTrip(w http.ResponseWriter, r *http.Request, m store.Member) {
 	if !validID(r.PathValue("id")) {
 		tripNotFound(w)
+		return
+	}
+	if _, err := s.visibleTrip(r.Context(), r.PathValue("id"), m); s.tripError(w, r, err) {
 		return
 	}
 	if s.tripError(w, r, s.removeTrip(r.Context(), r.PathValue("id"))) {
@@ -444,7 +496,7 @@ func (s *server) tripError(w http.ResponseWriter, r *http.Request, err error) bo
 }
 
 // setCoverPhoto marks a ready Photo of the Trip as its Cover photo.
-func (s *server) setCoverPhoto(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) setCoverPhoto(w http.ResponseWriter, r *http.Request, m store.Member) {
 	tripID := r.PathValue("id")
 	if !validID(tripID) {
 		tripNotFound(w)
@@ -467,7 +519,7 @@ func (s *server) setCoverPhoto(w http.ResponseWriter, r *http.Request, _ store.M
 		writeError(w, http.StatusBadRequest, "invalid-body", "photoId is required")
 		return
 	}
-	t, err := s.store.GetTrip(r.Context(), tripID)
+	t, err := s.visibleTrip(r.Context(), tripID, m)
 	if s.tripError(w, r, err) {
 		return
 	}
@@ -492,5 +544,5 @@ func (s *server) setCoverPhoto(w http.ResponseWriter, r *http.Request, _ store.M
 		return
 	}
 	t.CoverPhotoID = p.ID
-	s.writeTrip(w, r, t)
+	s.writeTrip(w, r, t, m)
 }

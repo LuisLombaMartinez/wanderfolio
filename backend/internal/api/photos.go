@@ -151,10 +151,8 @@ func (s *server) uploadLinks(w http.ResponseWriter, r *http.Request, m store.Mem
 		writeError(w, http.StatusUnprocessableEntity, "too-many-files", "too many files in one request")
 		return
 	}
-	if _, err := s.store.GetTrip(r.Context(), tripID); err != nil {
-		if s.tripError(w, r, err) {
-			return
-		}
+	if _, err := s.visibleTrip(r.Context(), tripID, m); s.tripError(w, r, err) {
+		return
 	}
 
 	// Check every file, generate every id and presign every link first; only then write the
@@ -207,7 +205,7 @@ func (s *server) mediaSession(w http.ResponseWriter, r *http.Request, _ store.Me
 // retryPhoto starts processing again for a failed Photo: the Photo goes back to processing and
 // the workflow runs once more on its original. Only a failed Photo can be retried, and a Photo stuck in processing
 // for longer than store.ProcessingTimeout (it reads as failed, see the store).
-func (s *server) retryPhoto(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) retryPhoto(w http.ResponseWriter, r *http.Request, m store.Member) {
 	tripID, photoID := r.PathValue("id"), r.PathValue("photoId")
 	if !validID(tripID) {
 		tripNotFound(w)
@@ -215,6 +213,9 @@ func (s *server) retryPhoto(w http.ResponseWriter, r *http.Request, _ store.Memb
 	}
 	if !validID(photoID) {
 		photoNotFound(w)
+		return
+	}
+	if !s.photoTripVisible(w, r, m, tripID) {
 		return
 	}
 	p, err := s.store.GetPhoto(r.Context(), tripID, photoID)
@@ -296,8 +297,24 @@ func photoNotFound(w http.ResponseWriter) {
 	writeError(w, http.StatusNotFound, "photo-not-found", "no such Photo")
 }
 
+// photoTripVisible reports whether the Member can see the Trip a Photo route names. A Trip
+// that is missing or hidden from them (its Pending Invitation is for them) answers the same
+// 404 a missing Photo does, and the route goes no further.
+func (s *server) photoTripVisible(w http.ResponseWriter, r *http.Request, m store.Member, tripID string) bool {
+	_, err := s.visibleTrip(r.Context(), tripID, m)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrNotFound):
+		photoNotFound(w)
+	default:
+		internalError(w, r, err)
+	}
+	return false
+}
+
 // setCaption sets, edits or clears (empty string) a Photo's caption. Either Member may.
-func (s *server) setCaption(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) setCaption(w http.ResponseWriter, r *http.Request, m store.Member) {
 	tripID, photoID := r.PathValue("id"), r.PathValue("photoId")
 	if !validID(tripID) || !validID(photoID) {
 		photoNotFound(w)
@@ -319,6 +336,9 @@ func (s *server) setCaption(w http.ResponseWriter, r *http.Request, _ store.Memb
 	caption, code, msg := validateCaption(*in.Caption)
 	if code != "" {
 		writeError(w, http.StatusUnprocessableEntity, code, msg)
+		return
+	}
+	if !s.photoTripVisible(w, r, m, tripID) {
 		return
 	}
 	p, err := s.store.SetCaption(r.Context(), tripID, photoID, caption)
@@ -352,10 +372,13 @@ func photoObjectKeys(tripID, photoID string) []string {
 // deletePhoto deletes a Photo in any state: its bucket objects first, then its record. In
 // that order a failure half-way is safe to retry (the Photo still shows, the DELETE can be
 // repeated). The bucket is versioned, so the originals stay recoverable for 30 days.
-func (s *server) deletePhoto(w http.ResponseWriter, r *http.Request, _ store.Member) {
+func (s *server) deletePhoto(w http.ResponseWriter, r *http.Request, m store.Member) {
 	tripID, photoID := r.PathValue("id"), r.PathValue("photoId")
 	if !validID(tripID) || !validID(photoID) {
 		photoNotFound(w)
+		return
+	}
+	if !s.photoTripVisible(w, r, m, tripID) {
 		return
 	}
 	if _, err := s.store.GetPhoto(r.Context(), tripID, photoID); err != nil {
@@ -378,7 +401,7 @@ func (s *server) deletePhoto(w http.ResponseWriter, r *http.Request, _ store.Mem
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// removeTrip deletes a Trip with all its Photos: bucket objects in batches of 1000 keys,
+// removeTrip deletes a Trip with all its Photos and its Invitation: bucket objects in batches of 1000 keys,
 // Photo records in batches of 25 (a few at once), and the Trip record last, so a failure
 // half-way leaves the Trip in place and the DELETE can simply be repeated. 200 Photos are
 // 600 keys (one S3 call) and 8 DynamoDB batches: well inside the 10 s Lambda timeout.
@@ -400,5 +423,6 @@ func (s *server) removeTrip(ctx context.Context, tripID string) error {
 	if err := s.store.DeletePhotos(ctx, tripID, ids); err != nil {
 		return err
 	}
+	// DeleteTrip removes the Invitation with the Trip, in one transaction.
 	return s.store.DeleteTrip(ctx, tripID)
 }
