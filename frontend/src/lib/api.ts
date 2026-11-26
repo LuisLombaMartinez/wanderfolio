@@ -77,6 +77,14 @@ export interface Invitation {
   acceptedAt: string | null
 }
 
+/** What the Trip list says about a Trip's Invitation: only its status (the marker on the Album card). */
+export interface InvitationSummary {
+  status: 'pending' | 'accepted'
+}
+
+/** A Trip as the Album list shows it: the Invitation is a summary, not the whole Invitation. */
+export type TripListItem = Omit<Trip, 'invitation'> & { invitation?: InvitationSummary | null }
+
 /** A Pending Invitation for the current Member, with what it needs to render while its Trip is hidden. */
 export interface PendingInvitation extends Invitation {
   destination: string
@@ -169,10 +177,23 @@ export function isPendingInvitation(v: unknown): v is PendingInvitation {
   )
 }
 
+export function isInvitationSummary(v: unknown): v is InvitationSummary {
+  return isRecord(v) && (v.status === 'pending' || v.status === 'accepted')
+}
+
 export function isTrip(v: unknown): v is Trip {
+  return isTripWith(v, isInvitation)
+}
+
+function isTripListItem(v: unknown): v is TripListItem {
+  return isTripWith(v, isInvitationSummary)
+}
+
+/** The Trip fields every response has; `invitation` is checked by the guard of that response. */
+function isTripWith(v: unknown, isInvitationShape: (i: unknown) => boolean): boolean {
   return (
     isRecord(v) &&
-    (v.invitation === undefined || v.invitation === null || isInvitation(v.invitation)) &&
+    (v.invitation === undefined || v.invitation === null || isInvitationShape(v.invitation)) &&
     typeof v.photoCount === 'number' &&
     Array.isArray(v.thumbnails) &&
     v.thumbnails.every((t) => typeof t === 'string') &&
@@ -195,7 +216,8 @@ function expectShape<T>(guard: (v: unknown) => v is T) {
   }
 }
 
-const isTripList = (v: unknown): v is { trips: Trip[] } => isRecord(v) && Array.isArray(v.trips) && v.trips.every(isTrip)
+const isTripList = (v: unknown): v is { trips: TripListItem[] } =>
+  isRecord(v) && Array.isArray(v.trips) && v.trips.every(isTripListItem)
 
 export const getCurrentMember = (signal?: AbortSignal) => apiGet('/me', signal).then(expectShape(isMember))
 

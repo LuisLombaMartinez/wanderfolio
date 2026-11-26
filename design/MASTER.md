@@ -1013,6 +1013,110 @@ Extends section 23. Codes as the Go API names them; the builder aligns the keys 
 10. `ui-ux-pro-max` searches for the disclosure toggle and the full-screen takeover returned no matching guideline; those choices follow the built-in defaults (visible labels, focus trap, visible focus) and this file's existing rules.
 11. Built differently from the sections above (builder, ticket #62): the gate wraps every route at the app level (around `Routes` and the `UploadBar`) rather than inside each `RequireMember`, so the queue survives the route change after "Sí"; it holds the boot screen only for a signed-in Member. The switch is a native `button role="switch"` styled with tokens, not the Radix one, to avoid a new dependency.
 
+## 60. "Ver invitación" on the Trip page (ticket #67)
+Extends section 20. Both Members can replay an Accepted Invitation from its Trip page, through the reusable Invitation (section 47). Sections 60-65 belong to the Invitations spec (#6), after #66's 54-59.
+
+**When it shows.** Only when the Trip detail's `invitation` is not null and its `status` is `accepted`, for either Member. No Invitation, or a Pending one: no button (while Pending, the Inviter has #66's controls in the same place instead). The Invitation's data (question, destination, dates, and #63's Backdrop when it exists) is already in the Trip detail, so the button needs no request of its own and renders with the page.
+
+**Placement: the Invitation row.** A new row on the Trip page, directly under the actions row (section 20, item 5: "Editar" / "Borrar") and above the Countdown, 16px below the actions. It is the one shared slot for everything about the Trip's Invitation, so #66 and this ticket never compete for space:
+- **First, the status badge** from #66 (sections 54-59; Inviter only, e.g. "aceptada el {fecha}").
+- **Then the Invitation buttons:** #66's edit / delete / preview while Pending, or "Ver invitación" once Accepted. The two sets never show at the same time (Pending and Accepted are exclusive), so "Ver invitación" takes the spot where "Previsualizar" sat before the "Sí".
+- **Placement once #66 lands (orchestrator decision):** for the Inviter, "Ver invitación" sits in the Accepted "Tu invitación" card (section 54); for the Invitee, who has no card, it stays in this row. Same `ReplayInvitationButton` and `keepsake` style in both.
+- If #66 names or lays out the row differently, keep its structure and put "Ver invitación" as the row's button; the rule that matters is "under Editar/Borrar, badge before button".
+
+**Mobile (390x844).** The row stacks: the badge on its own line (Inviter only), 12px gap, then "Ver invitación" at full content width (350px). With "Editar" and "Borrar" side by side above, the page reads two half-width actions, then one full-width keepsake. For the Invitee (no badge) the row is just the button.
+
+**Desktop (>= 1024px).** In the right column of section 20's grid, same order: actions row, Invitation row (badge and button on one line, wrapping if the column is too narrow; button at natural width, left-aligned), then the Countdown. Tablet: as mobile, with the button at natural width.
+
+**The button (`ReplayInvitationButton`).** A new `Button` variant `keepsake`:
+- Pill, 48px tall, Nunito 700 18px, text "Ver invitación", `Gift` icon (20px, `--primary`, the Invitation icon since section 51) before the label.
+- Fill: the sunset gradient in small (`--secondary` → `#FFD9C7`, the `--gradient-sunset` stops, 120deg; add it as `--gradient-keepsake`, no inline hex), 1px `--border`, `--secondary-foreground` text (>7:1 on both stops), pink shadow. It reads as warmer than `soft` but quieter than `yes`, which stays reserved for the "Sí".
+- Hover (pointer): lift `y -2px`, shadow grows, the `Gift` icon tilts -10deg and back (300ms `back.out(1.7)`). Press: scale .98. Focus-visible: `--ring` 2px + 2px offset.
+- Accessible name "Ver invitación"; `aria-haspopup="dialog"`.
+
+**States.**
+- Loading: the Trip page skeleton (section 20) has no placeholder for the row; the row appears with the loaded page (the entrance stagger covers it).
+- Error / not found: the page's own states (section 20); the button is never shown on them.
+- There is no request on press, so the button has no loading or failure state.
+- Missing Photo: none here. The Invitation has no Photos; without a Backdrop it uses the designed gradient (section 47), which is not a placeholder.
+
+**Motion.** Part of the section 20 text column entrance (it is the item after the actions). Reduced motion: no lift, no tilt (shadow change only), visible at once.
+
+## 61. Replaying an Invitation (`Invitation` in replay mode, ticket #67)
+The same `Invitation` component and look as the first view (section 47): kicker "para ti", the question, the meta line, "No" that dodges and never gives up, "Sí" that grows. Every replay starts fresh ("No" in its place, "Sí" at scale 1, counter at 0). Spec #6: in replay, "Sí" plays the transition but records nothing.
+
+**Opening.** Pressing "Ver invitación" mounts the Invitation over the Trip page as a fixed layer (`z-50`), like the resume case of section 48: the page stays mounted underneath, `inert` and `aria-hidden`, body scroll locked, any upload in progress keeps going. The section 47 entrance plays (backdrop 0.4s, then kicker, question, meta and buttons with stagger; "No" ignores triggers during it). Initial focus on "Sí", focus trapped, `role="dialog"`, `<title>` "Una invitación para ti · Viajecito" while open. No new route and no history entry.
+
+**No way out but "Sí".** No close button and Escape does nothing, as in the first view: the replay is the game, and "Sí" is always one tap or one Enter away (it has initial focus). Browser back behaves as usual on the Trip page (goes back; the replay unmounts with the page). See open decision 2.
+
+**"Sí" in replay.** Calls `onYes(origin)` with the replay handler; **no accept request is sent**, so `acceptedAt` and #66's "aceptada el {fecha}" never change.
+1. The section 50 transition: "Sí" beats once and is disabled, the hearts burst, the `--primary` circle grows from "Sí" and covers the screen (0.9s).
+2. With nothing to wait for, there is no hold state ("Guardando tu sí…"), no failure alert and no "not found" path.
+3. The Invitation unmounts under the circle; the circle fades out over the same Trip page (0.5s). No navigation (we are already on `/trips/:id`), scroll position unchanged.
+4. As the circle clears, the Trip page replays its hero entrance (section 20: cover, then the text column, 0.5s `power2.out`, stagger 0.08s), so the replay ends like the original "Sí": landing on the Trip. The Photos section below does not re-enter.
+5. Focus returns to the "Ver invitación" button (the dialog's trigger), not the `h1`: the Member is already on the page and may want to replay again.
+
+**Reduced motion.** Opening: the Invitation fades in over 200ms, no entrance stagger. "No" still dodges (instant jump) and "Sí" still grows (instant), as in section 47. "Sí": no beat, hearts or circle; the Invitation cross-fades out (200ms) straight to the Trip page, which stays still (no hero entrance). Focus returns to the button.
+
+**Pending Invitations meanwhile.** If the gate (section 48) brings a real Pending Invitation on resume while a replay is up, the replay unmounts at once (no transition) and the real one enters. A replay never sits in the gate's queue.
+
+## 62. Phase 1 Trip replay (for ticket #64)
+#64 seeds the Phase 1 Invitation on the Phase 1 Trip, already Accepted, with no Backdrop. Its question is typed into the setup wizard, never committed. Its replay is section 61 with no special case, and it keeps the Phase 1 look and feel:
+- Gradient backdrop with the three blobs (section 47), the Phase 1 background.
+- The question given to the wizard; a Phase 1-length question (under 60 characters) gets the Phase 1 size, `clamp(2rem, 8vw, 3.5rem)`.
+- Kicker "para ti", the Phase 1 "No" phrases, the Phase 1 "Sí" growth and transition.
+- Differences from Phase 1, accepted by the spec ("same look and feel, not pixel-perfect"): the small meta line (MapPin with the destination, CalendarHeart with the dates) under the question (section 53, decision 6), and the transition lands on the Trip page instead of Phase 1's retired welcome screen (section 8).
+- #64 must not add a Phase 1 variant of the component. If the user wants the Phase 1 screen without the meta line, that is a `showMeta` choice for all replays, not a special case (open decision 4).
+
+## 63. Album marker: Trips that started with an Invitation (ticket #67)
+Extends sections 18 and 27. The marker makes these Trips stand out a little in the grid without competing with the Cover photo or the title.
+
+**Data.** The Trip list (`GET /api/trips`) has no `invitation` today (section 47 handoff: "Not in the Trip list"). Ticket #67 adds a small summary per item, e.g. `invitation: { status: "pending" | "accepted" } | null` (the builder aligns the name with the backend). Only the Inviter ever sees a `pending` one in the list, since the Invitee's Pending Trips are hidden.
+
+**The seal pill (`InvitationSeal`).** Top-right of the Cover area, 12px inset, so it never meets the upcoming status chip (top-left, section 18) or the photo count chip / placeholder label (bottom-left, sections 19 and 27).
+- Same pill base as the status chip (13px Nunito 700, `--card` at 90% with `backdrop-blur`, `--secondary-foreground` text, 28px tall, 10px side padding), with a `Gift` icon (14px, `--primary`) and a 1px ring of `--primary` at 25%, which is what sets it apart from the status chip.
+- Copy (`white-space: nowrap`, never wraps):
+  - Accepted: "Empezó con un sí"
+  - Pending (Inviter only): "Esperando su sí"
+- **Narrow cards** (card width under 300px, e.g. the 2-column grid at 640-700px): icon only, a 28px circle with the same fill and ring; the text moves to the screen-reader copy below.
+- Shown on every card with an Invitation, past or upcoming, with a Cover photo or the placeholder. It sits above the image and the placeholder blob.
+
+**The card edge.** Cards with an Invitation also get a hairline aurora ring: 1.5px, `--primary` at 30% → `--accent` at 45%, 135deg, drawn with a masked `::after` over the 24px radius (no layout change, no extra border box). Add the gradient as `--ring-invitation`. It is the "a little" in "stand out a little": visible across the grid, gone on a close look at any single card next to the seal. Cards without an Invitation are unchanged.
+
+**Accessibility.** The seal is `aria-hidden`. Inside the card link, after the dates line, a visually hidden line carries the meaning: "Empezó con una invitación." (accepted) / "Con una invitación esperando su sí." (pending). Meaning never rests on the ring's colour; the seal text and the screen-reader line carry it.
+
+**Mobile (390x844).** One column, cards 350px wide: the full pill fits next to the longest status chip ("En 365 días", about 110px) with room to spare. **Desktop.** 3 columns from 1024px (cards about 340px): full pill. 2 columns from 640px: icon-only when the card is under 300px.
+
+**States.**
+- Loading: the Album skeleton (section 16) has no seal; seals come with the cards.
+- Empty Album / error: unchanged (section 16); no seals.
+- Missing Photo: the seal sits over the `CoverPlaceholder` the same way as over a Photo; the placeholder label stays bottom-left. On a Cover load failure (section 27) the seal stays.
+
+**Motion.** Seals enter with their card (section 18 stagger), nothing of their own. On card hover (pointer), the `Gift` icon tilts -10deg and back (300ms `back.out(1.7)`), alongside the card lift. The ring is static. Reduced motion: no tilt, nothing moves.
+
+## 64. API errors and strings in Spanish (additions, ticket #67)
+No new error copy: replay sends no request, and the Trip page's states cover a failed load.
+
+| where | Spanish |
+|---|---|
+| Trip page button | "Ver invitación" |
+| Album seal, accepted | "Empezó con un sí" |
+| Album seal, pending (Inviter) | "Esperando su sí" |
+| Card screen-reader line, accepted | "Empezó con una invitación." |
+| Card screen-reader line, pending | "Con una invitación esperando su sí." |
+| Replay `<title>` | "Una invitación para ti · Viajecito" |
+
+## 65. Open decisions (ticket #67, for review in its PR)
+1. "Ver invitación" sits in a shared Invitation row under "Editar"/"Borrar", full width at 390, with a new warm `keepsake` variant (sunset gradient, `Gift`). Alternative: a plain `soft` pill in the actions row next to "Editar"/"Borrar" (three buttons at 390 get cramped).
+2. The replay has no close button and ignores Escape, like the first view, because "Sí" is always one tap away. Alternative: a small "Cerrar" in the corner for replays only, which makes it feel less like the game.
+3. After a replay, the circle clears over the same Trip page, its hero entrance plays again and focus returns to the button. Alternative: no re-entrance (just the fade), which is calmer but loses the "landing on the Trip" moment.
+4. The Phase 1 Trip replay keeps the meta line under the question, as every Invitation does (section 53, decision 6). If it should look closer to Phase 1, hide the meta line in all replays (`showMeta` false), not only on the Phase 1 Trip.
+5. The kicker stays "para ti" in replay, even when the Inviter replays their own Invitation. It is the screen the Invitee saw; changing it ("para nosotros") would make the replay a different screen.
+6. The Album marker is a top-right seal pill ("Empezó con un sí" / "Esperando su sí") plus a hairline aurora ring on the card. Alternatives: the seal alone (quieter), or a script line "empezó con un sí" in the card body (more romantic, but shifts the text block of some cards in a row).
+7. The Inviter's Pending Trips also carry the seal, with "Esperando su sí", so the Inviter can find the Trips still waiting. If that overlaps too much with #66's badge, show the seal only once Accepted.
+8. No visible acceptance date for the Invitee (spec #6 shows "aceptada el {fecha}" to the Inviter only, #66). A line such as "Dijiste que sí el 12 may 2027" under the button would be a small addition if wanted.
+9. `ui-ux-pro-max`: the compact-label guideline (pill stays on one line, full text available without hover) shaped the seal's nowrap and icon-only fallback with a screen-reader line; the search for returning focus from a modal returned no specific guideline, so returning focus to the trigger follows the built-in dialog default.
+
 ## Decisions (confirmed by the user, Phase 1)
 1. **Palette**: pink / coral / turquoise as defined above.
 2. **Script font**: Great Vibes for short accents only.

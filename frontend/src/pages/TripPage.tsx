@@ -5,13 +5,14 @@ import { useAuth } from '@/auth/auth-context'
 import { Countdown } from '@/components/Countdown'
 import { DeleteTripDialog } from '@/components/DeleteTripDialog'
 import { PhotosSection, type PhotoActions } from '@/components/PhotosSection'
+import { ReplayInvitationButton } from '@/components/ReplayInvitationButton'
 import { TripCover } from '@/components/TripCover'
 import { TripShell } from '@/components/TripShell'
 import { TripLoadErrorCard, TripNotFoundCard } from '@/components/TripStateCards'
 import { Button } from '@/components/ui/button'
 import { ApiError, getTrip, type Photo, type Trip } from '@/lib/api'
 import { daysUntil, formatDateRange, tripLengthLabel } from '@/lib/dates'
-import { gsap, useGSAP } from '@/lib/gsap'
+import { gsap, prefersReducedMotion, useGSAP } from '@/lib/gsap'
 import { removePhoto, replacePhoto } from '@/lib/photos'
 import { useAfter } from '@/lib/useAfter'
 import { useTripPolling } from '@/lib/useTripPolling'
@@ -95,6 +96,14 @@ function TripDetails({ trip, connectionLost, photoActions }: { trip: Trip; conne
     heading.current?.focus()
   }, [trip.id])
 
+  // The hero comes in again when a replay of the Invitation ends (MASTER section 61); none with reduced motion.
+  const { contextSafe } = useGSAP({ scope: root })
+  const replayHero = contextSafe(() => {
+    if (prefersReducedMotion()) return
+    gsap.from('[data-hero] [data-cover]', { scale: 0.98, duration: 0.5, ease: 'power2.out' })
+    gsap.from('[data-hero] [data-enter]', { autoAlpha: 0, y: 24, duration: 0.5, ease: 'power2.out', stagger: 0.08 })
+  })
+
   useGSAP(
     () => {
       const mm = gsap.matchMedia()
@@ -109,7 +118,7 @@ function TripDetails({ trip, connectionLost, photoActions }: { trip: Trip; conne
 
   return (
     <div ref={root}>
-      <div className="grid gap-6 lg:grid-cols-12 lg:items-center lg:gap-10">
+      <div data-hero className="grid gap-6 lg:grid-cols-12 lg:items-center lg:gap-10">
         <div data-enter data-cover className="mx-auto w-full max-w-[640px] lg:col-span-7 lg:max-w-none">
           <TripCover
             tripId={trip.id}
@@ -163,6 +172,19 @@ function TripDetails({ trip, connectionLost, photoActions }: { trip: Trip; conne
                 Borrar
               </Button>
             </div>
+            {/* The Invitation row: where everything about the Trip's Invitation goes (MASTER section 60). */}
+            {trip.invitation?.status === 'accepted' && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <ReplayInvitationButton
+                  invitation={trip.invitation}
+                  destination={trip.destination}
+                  startDate={trip.startDate}
+                  endDate={trip.endDate}
+                  onLanded={replayHero}
+                  className="w-full sm:w-auto"
+                />
+              </div>
+            )}
           </div>
           {upcoming && (
             <div data-enter className="mt-8">

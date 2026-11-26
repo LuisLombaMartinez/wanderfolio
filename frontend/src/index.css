@@ -30,6 +30,8 @@
   --cover-atardecer: linear-gradient(160deg, var(--muted) 0%, #ffd9c7 50%, color-mix(in srgb, var(--accent) 40%, #ffd9c7) 100%);
   --cover-mar: linear-gradient(140deg, var(--secondary) 0%, color-mix(in srgb, var(--ocean) 30%, var(--secondary)) 100%);
   --gradient-sunset: linear-gradient(160deg, #fff5f7 0%, #ffe1e9 45%, #ffd9c7 100%);
+  --gradient-keepsake: linear-gradient(120deg, var(--secondary) 0%, #ffd9c7 100%);
+  --ring-invitation: linear-gradient(135deg, color-mix(in srgb, var(--primary) 30%, transparent), color-mix(in srgb, var(--accent) 45%, transparent));
 }
 
 @theme inline {
@@ -81,6 +83,19 @@
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
+}
+
+/* A hairline aurora ring on the Album cards that started with an Invitation (MASTER section 63). */
+.invitation-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: var(--ring-invitation);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 @keyframes dialog-in {

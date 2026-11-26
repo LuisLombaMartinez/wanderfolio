@@ -7,6 +7,8 @@ import { Transition, type TransitionOutcome } from '@/components/Transition'
 import { ApiError, acceptInvitation, listPendingInvitations, type PendingInvitation } from '@/lib/api'
 import { appendPending } from '@/lib/invitation'
 import { ACCEPT_FAILED } from '@/lib/messages'
+import { useInvitationLayer } from '@/lib/useInvitationLayer'
+import { InvitationTakeoverContext } from '@/components/invitation-takeover'
 
 /** Ask again on return only after the app was hidden this long (MASTER section 48). */
 export const RESUME_AFTER_MS = 5 * 60 * 1000
@@ -14,8 +16,6 @@ export const RESUME_AFTER_MS = 5 * 60 * 1000
 export const BOOT_TIMEOUT_MS = 6000
 /** A resume check may be slower than the boot one, but a hung request must not block later asks. */
 export const RESUME_TIMEOUT_MS = 15_000
-/** The tab title while an Invitation is up (MASTER section 47). */
-const INVITATION_TITLE = 'Una invitación para ti · Viajecito'
 /** The next Invitation of a queue enters this long after the Trip page is revealed. */
 export const NEXT_AFTER_MS = 1500
 /** An accept that takes longer than this counts as failed (it is idempotent, so retrying is safe). */
@@ -156,27 +156,7 @@ export function InvitationGate({ children }: { children: ReactNode }) {
   const current = showing && !onLogin && memberId ? queue[0] : undefined
   const active = current !== undefined
 
-  // While an Invitation is up: its own title (it wins over the page's, which may set its own
-  // after this runs), and the page beneath doesn't scroll.
-  useEffect(() => {
-    if (!active) return
-    let pageTitle = document.title
-    document.title = INVITATION_TITLE
-    const watch = new MutationObserver(() => {
-      if (document.title === INVITATION_TITLE) return
-      pageTitle = document.title
-      document.title = INVITATION_TITLE
-    })
-    const titleEl = document.querySelector('title')
-    if (titleEl) watch.observe(titleEl, { childList: true, characterData: true, subtree: true })
-    const overflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      watch.disconnect()
-      document.title = pageTitle
-      document.body.style.overflow = overflow
-    }
-  }, [active])
+  useInvitationLayer(active)
 
   function sayYes(invitation: PendingInvitation, origin: Origin, forMember: string) {
     if (saying) return
@@ -233,7 +213,7 @@ export function InvitationGate({ children }: { children: ReactNode }) {
     <>
       {/* `contents` keeps the page's own layout; inert keeps focus and clicks off it. */}
       <div className="contents" inert={active || undefined} aria-hidden={active || undefined}>
-        {children}
+        <InvitationTakeoverContext value={active}>{children}</InvitationTakeoverContext>
       </div>
       {current && (
         <div className="fixed inset-0 z-50">

@@ -115,3 +115,18 @@ describe('Invitations', () => {
     await expect(getTrip('x')).rejects.toMatchObject({ code: 'bad-response' })
   })
 })
+
+describe('the Trip list marker', () => {
+  it('reads the Invitation summary of each Trip, or null', async () => {
+    reply({ trips: [{ ...trip, invitation: { status: 'accepted' } }, { ...trip, invitation: { status: 'pending' } }, { ...trip, invitation: null }] })
+    const trips = await listTrips()
+    expect(trips.map((t) => t.invitation?.status ?? null)).toEqual(['accepted', 'pending', null])
+  })
+
+  it('refuses a summary with an unknown status', async () => {
+    reply({ trips: [{ ...trip, invitation: { status: 'maybe' } }] })
+    await expect(listTrips()).rejects.toMatchObject({ code: 'bad-response' })
+    reply({ trips: [{ ...trip, invitation: 'accepted' }] })
+    await expect(listTrips()).rejects.toMatchObject({ code: 'bad-response' })
+  })
+})

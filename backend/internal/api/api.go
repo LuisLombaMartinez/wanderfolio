@@ -162,6 +162,9 @@ type tripJSON struct {
 	// CoverPhoto is the Trip's Cover photo: the chosen ready Photo, else the first ready Photo in
 	// date-taken order; null when the Trip has no ready Photo.
 	CoverPhoto *coverPhotoJSON `json:"coverPhoto"`
+	// Invitation marks a Trip that started with an Invitation; null otherwise. It carries only
+	// the status (the Invitation itself is on the Trip detail).
+	Invitation *invitationSummaryJSON `json:"invitation"`
 }
 
 type coverPhotoJSON struct {
@@ -188,7 +191,7 @@ func toTripJSON(t store.Trip, photos []store.Photo) tripJSON {
 	j := tripJSON{
 		ID: t.ID, Title: t.Title, Destination: t.Destination,
 		StartDate: t.StartDate, EndDate: t.EndDate, Description: t.Description,
-		Thumbnails: []string{},
+		Thumbnails: []string{}, Invitation: toInvitationSummary(t),
 	}
 	var chosen *coverPhotoJSON
 	for _, p := range photos {

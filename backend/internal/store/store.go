@@ -53,6 +53,10 @@ type Trip struct {
 	// HiddenFrom is the Invitee of the Trip's Pending Invitation: the Trip is hidden from that
 	// Member until they accept. Empty when the Trip has no Pending Invitation.
 	HiddenFrom string
+	// InvitedBy is the Inviter of the Trip's Invitation: set when the Trip is created with an
+	// Invitation and kept for good, so the Album can mark Trips that started with one without
+	// reading the Invitation. Empty when the Trip has no Invitation.
+	InvitedBy string
 }
 
 // VisibleTo reports whether the Member can see the Trip: every Trip except one whose
@@ -95,6 +99,7 @@ type tripItem struct {
 	Description  string `dynamodbav:"description,omitempty"`
 	CoverPhotoID string `dynamodbav:"coverPhotoId,omitempty"`
 	HiddenFrom   string `dynamodbav:"hiddenFrom,omitempty"`
+	InvitedBy    string `dynamodbav:"invitedBy,omitempty"`
 }
 
 func newTripItem(t Trip) tripItem {
@@ -102,7 +107,7 @@ func newTripItem(t Trip) tripItem {
 		PK: "TRIP#" + t.ID, SK: "TRIP", GSI1PK: albumPartition, GSI1SK: t.StartDate + "#" + t.ID,
 		ID: t.ID, Title: t.Title, Destination: t.Destination,
 		StartDate: t.StartDate, EndDate: t.EndDate, Description: t.Description,
-		HiddenFrom: t.HiddenFrom,
+		HiddenFrom: t.HiddenFrom, InvitedBy: t.InvitedBy,
 	}
 }
 
@@ -200,7 +205,7 @@ func tripFromItem(it tripItem) Trip {
 	return Trip{
 		ID: it.ID, Title: it.Title, Destination: it.Destination,
 		StartDate: it.StartDate, EndDate: it.EndDate, Description: it.Description,
-		CoverPhotoID: it.CoverPhotoID, HiddenFrom: it.HiddenFrom,
+		CoverPhotoID: it.CoverPhotoID, HiddenFrom: it.HiddenFrom, InvitedBy: it.InvitedBy,
 	}
 }
 
@@ -210,7 +215,7 @@ func (s *Store) CreateTrip(ctx context.Context, t Trip) (Trip, error) {
 	if err != nil {
 		return Trip{}, err
 	}
-	t.ID, t.HiddenFrom = id, ""
+	t.ID, t.HiddenFrom, t.InvitedBy = id, "", ""
 	item, err := attributevalue.MarshalMap(newTripItem(t))
 	if err != nil {
 		return Trip{}, fmt.Errorf("marshal trip: %w", err)

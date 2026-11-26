@@ -6,7 +6,7 @@ import { AppHeader } from '@/components/AppHeader'
 import { StateCard } from '@/components/StateCard'
 import { TripCard } from '@/components/TripCard'
 import { Button } from '@/components/ui/button'
-import { listTrips, type Trip } from '@/lib/api'
+import { listTrips, type TripListItem } from '@/lib/api'
 import { gsap, useGSAP } from '@/lib/gsap'
 import { useAfter } from '@/lib/useAfter'
 import { INVITATION_GONE } from '@/lib/messages'
@@ -14,7 +14,7 @@ import { INVITATION_GONE } from '@/lib/messages'
 // The Album's entrances play once per visit to the app, not on every return from a Trip page.
 let albumEntered = false
 
-type Load = { status: 'loading' } | { status: 'error' } | { status: 'ready'; trips: Trip[] }
+type Load = { status: 'loading' } | { status: 'error' } | { status: 'ready'; trips: TripListItem[] }
 
 /** The Album: every Trip, newest first. This ticket ships its shell and empty state. */
 export function AlbumPage() {

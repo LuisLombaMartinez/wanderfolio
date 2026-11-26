@@ -104,7 +104,7 @@ func (s *Store) CreateTripWithInvitation(ctx context.Context, t Trip, inv Invita
 	if err != nil {
 		return Trip{}, Invitation{}, err
 	}
-	t.ID, t.HiddenFrom = id, inv.InviteeID
+	t.ID, t.HiddenFrom, t.InvitedBy = id, inv.InviteeID, inv.InviterID
 	inv.TripID, inv.CreatedAt, inv.AcceptedAt = id, s.now().UTC().Format(invitationTimeLayout), ""
 	tripAV, err := attributevalue.MarshalMap(newTripItem(t))
 	if err != nil {

@@ -1,23 +1,14 @@
-import { expect, test, type Browser, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { emptyAlbum, fillTrip } from './support/album'
 import { MEMBERS } from './support/members'
 import { snap } from './support/screenshots'
-import { isoDay, signInAs } from './support/session'
+import { entranceDone, invitation, member, settled } from './support/invitations'
+import { isoDay } from './support/session'
 
 // Two browser contexts, one per Member: A (Leo) invites, B (Ana) is the Invitee. Both use the
 // project's device, so the journey runs at 390x844 (touch) and on desktop (mouse).
 const INVITER = MEMBERS.mobile.email
 const INVITEE = MEMBERS.desktop.email
-
-async function member(browser: Browser, testInfo: TestInfo, email: string, reducedMotion: 'reduce' | 'no-preference') {
-  const { viewport, deviceScaleFactor, isMobile, hasTouch, userAgent, locale, baseURL } = testInfo.project.use
-  const ctx = await browser.newContext({
-    viewport, deviceScaleFactor, isMobile, hasTouch, userAgent, locale, baseURL, reducedMotion,
-  })
-  const page = await ctx.newPage()
-  await signInAs(page, email)
-  return page
-}
 
 /** A creates a Trip with an Invitation from the form and returns the Trip's id. */
 async function invite(page: Page, title: string, destination: string, question?: string, shot?: () => Promise<void>) {
@@ -47,10 +38,6 @@ async function invite(page: Page, title: string, destination: string, question?:
   return id!
 }
 
-function invitation(page: Page) {
-  return page.getByRole('dialog')
-}
-
 async function expectInViewport(page: Page, el: Locator) {
   const box = await el.boundingBox()
   const vp = page.viewportSize()!
@@ -60,36 +47,6 @@ async function expectInViewport(page: Page, el: Locator) {
   expect(box!.x + box!.width).toBeLessThanOrEqual(vp.width)
   expect(box!.y + box!.height).toBeLessThanOrEqual(vp.height)
   return box!
-}
-
-/** Waits until the element stops moving: two reads of its box, a frame apart, are equal. */
-async function settled(el: Locator) {
-  let last = ''
-  await expect
-    .poll(async () => {
-      const b = await el.boundingBox()
-      const now = b ? [b.x, b.y, b.width, b.height].map((n) => n.toFixed(1)).join(',') : ''
-      const same = now !== '' && now === last
-      last = now
-      return same
-    })
-    .toBe(true)
-}
-
-/** Waits for the entrance to finish: every rising element has its transform and opacity cleared. */
-async function entranceDone(page: Page) {
-  const dialog = invitation(page)
-  await expect
-    .poll(() =>
-      dialog.evaluate((el) =>
-        Array.from(el.querySelectorAll('[data-rise]')).every((r) => {
-          const cs = getComputedStyle(r)
-          return cs.opacity === '1' && (cs.transform === 'none' || new DOMMatrix(cs.transform).isIdentity)
-        }),
-      ),
-    )
-    .toBe(true)
-  await settled(dialog.getByRole('button', { name: /^No/ }))
 }
 
 /** The current scale of "Sí", read from its transform matrix. */

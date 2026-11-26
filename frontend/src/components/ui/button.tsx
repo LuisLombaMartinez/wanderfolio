@@ -12,6 +12,7 @@ const buttonVariants = cva(
         no: 'min-h-12 min-w-[120px] select-none border border-border bg-no-bg px-8 text-no-fg hover:bg-muted',
         ghost: 'text-secondary-foreground hover:bg-secondary',
         destructive: 'min-h-12 bg-foreground px-8 text-primary-foreground hover:bg-foreground/90',
+        keepsake: 'min-h-12 border border-border bg-[image:var(--gradient-keepsake)] px-6 text-secondary-foreground shadow-pink hover:-translate-y-0.5 hover:shadow-pink-lift active:scale-[0.98] motion-reduce:hover:translate-y-0',
         soft: 'bg-secondary text-secondary-foreground hover:bg-secondary/70',
       },
       size: {

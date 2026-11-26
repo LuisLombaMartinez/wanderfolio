@@ -183,3 +183,21 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, m stor
 	}
 	writeJSON(w, http.StatusOK, toInvitationJSON(inv))
 }
+
+// invitationSummaryJSON is what an Album card needs to mark a Trip that started with an Invitation.
+type invitationSummaryJSON struct {
+	// Status is "pending" or "accepted".
+	Status string `json:"status"`
+}
+
+// toInvitationSummary is nil for a Trip without an Invitation. A Trip is Pending exactly while
+// it is hidden from its Invitee (the list never shows a hidden Trip to the Invitee).
+func toInvitationSummary(t store.Trip) *invitationSummaryJSON {
+	switch {
+	case t.InvitedBy == "":
+		return nil
+	case t.HiddenFrom != "":
+		return &invitationSummaryJSON{Status: "pending"}
+	}
+	return &invitationSummaryJSON{Status: "accepted"}
+}

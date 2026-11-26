@@ -28,3 +28,10 @@ export function appendPending<T extends { tripId: string }>(queue: T[], incoming
   const added = incoming.filter((i) => !have.has(i.tripId) && have.add(i.tripId))
   return added.length ? [...queue, ...added] : queue
 }
+
+/** The Album seal's words (MASTER sections 63 and 64): what it says, and what a screen reader hears. */
+export function invitationSealCopy(status: 'pending' | 'accepted') {
+  return status === 'accepted'
+    ? { label: 'Empezó con un sí', note: 'Empezó con una invitación.' }
+    : { label: 'Esperando su sí', note: 'Con una invitación esperando su sí.' }
+}
