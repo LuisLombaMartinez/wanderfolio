@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { AlertCircle, CalendarHeart, Heart, MapPin, Waves } from "lucide-react";
+import { PreviewRibbon } from "@/components/PreviewRibbon";
 import { Button } from "@/components/ui/button";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { formatDateRange } from "@/lib/dates";
@@ -37,6 +38,11 @@ export interface InvitationProps {
   /** Shown above the buttons, e.g. when the "Sí" did not arrive. */
   alert?: string;
   onYes: (origin: Origin) => void;
+  /**
+   * The Inviter's preview (MASTER section 57): a ribbon with "Salir", Escape also leaves, and the
+   * dialog is described by the ribbon first. Everything else is the real Invitation.
+   */
+  preview?: { onExit: () => void };
 }
 
 const DODGE_MESSAGES = [
@@ -79,6 +85,7 @@ export function Invitation({
   busy = false,
   alert,
   onYes,
+  preview,
 }: InvitationProps) {
   const root = useRef<HTMLElement>(null);
   const metaRef = useRef<HTMLParagraphElement>(null);
@@ -88,6 +95,10 @@ export function Invitation({
   const glowRef = useRef<HTMLSpanElement>(null);
   const noRef = useRef<HTMLButtonElement>(null);
   const questionRef = useRef<HTMLHeadingElement>(null);
+  const ribbonRef = useRef<HTMLDivElement>(null);
+  const exitRef = useRef<HTMLButtonElement>(null);
+  const ribbonId = useId();
+  const [ribbonBottom, setRibbonBottom] = useState(0);
 
   const [dodges, setDodges] = useState(0);
   const [reserve, setReserve] = useState(0);
@@ -108,6 +119,25 @@ export function Invitation({
 
   useEffect(() => {
     yesRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // The layout starts below the ribbon, whatever number of lines it wraps to.
+  useEffect(() => {
+    const ribbon = ribbonRef.current;
+    if (!ribbon) return;
+    const measure = () => setRibbonBottom(ribbon.getBoundingClientRect().bottom);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [preview]);
+
+  /** Safe-area insets, with the top grown by the preview ribbon so "No" never hides under it. */
+  const insets = useCallback(() => {
+    const base = readSafeInsets();
+    const ribbon = ribbonRef.current;
+    return ribbon
+      ? { ...base, top: Math.max(base.top, ribbon.getBoundingClientRect().bottom) }
+      : base;
   }, []);
 
   /** Largest scale "Sí" may reach without breaking the layout. */
@@ -189,9 +219,11 @@ export function Invitation({
           obstacles.push(boxOf(questionRef.current.getBoundingClientRect(), 8));
         if (metaRef.current)
           obstacles.push(boxOf(metaRef.current.getBoundingClientRect(), 8));
+        if (ribbonRef.current)
+          obstacles.push(boxOf(ribbonRef.current.getBoundingClientRect(), 8));
 
         const size = { w: no.offsetWidth, h: no.offsetHeight };
-        const bounds = getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight });
+        const bounds = getBounds(size, MARGIN, insets(), { w: window.innerWidth, h: window.innerHeight });
         const next = pickPosition({
           bounds,
           size,
@@ -263,7 +295,7 @@ export function Invitation({
         const size = { w: no.offsetWidth, h: no.offsetHeight };
         pos.current = clampPoint(
           pos.current,
-          getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight }),
+          getBounds(size, MARGIN, insets(), { w: window.innerWidth, h: window.innerHeight }),
         );
         gsap.set(no, { x: pos.current.x, y: pos.current.y });
       });
@@ -280,7 +312,7 @@ export function Invitation({
         no.removeEventListener("touchstart", onTouch);
       };
     },
-    { scope: root, dependencies: [scaleFor, centerShift] },
+    { scope: root, dependencies: [scaleFor, centerShift, insets] },
   );
 
   // After the label changes, keep "No" fully visible.
@@ -291,7 +323,7 @@ export function Invitation({
     const target = pos.current;
     const clamped = clampPoint(
       target,
-      getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight }),
+      getBounds(size, MARGIN, insets(), { w: window.innerWidth, h: window.innerHeight }),
     );
     if (clamped.x === target.x && clamped.y === target.y) return;
     pos.current = clamped;
@@ -305,7 +337,7 @@ export function Invitation({
         duration: 0.25,
         ease: "power2.out",
       });
-  }, [dodges]);
+  }, [dodges, insets]);
 
   // Entrance: the backdrop fades in, then the text and the buttons rise. None with reduced motion.
   useGSAP(
@@ -379,17 +411,22 @@ export function Invitation({
     onYes({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
   };
 
-  // A modal with two buttons: Tab moves between them and never leaves; Escape does nothing.
+  // A modal with two buttons (three in a preview, with "Salir"): Tab moves around them and never
+  // leaves. Escape does nothing, except in a preview, where it leaves.
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      preview?.onExit();
       return;
     }
     if (e.key !== "Tab") return;
     e.preventDefault();
-    const next =
-      document.activeElement === yesRef.current ? noRef.current : yesRef.current;
-    next?.focus({ preventScroll: true });
+    const ring = [yesRef.current, noRef.current, preview ? exitRef.current : null].filter(
+      (el): el is HTMLButtonElement => el !== null,
+    );
+    const at = ring.indexOf(document.activeElement as HTMLButtonElement);
+    const step = e.shiftKey ? -1 : 1;
+    ring[(at + step + ring.length) % ring.length]?.focus({ preventScroll: true });
   };
 
   // Line breaks collapse to spaces; Array.from counts an emoji as one character.
@@ -408,16 +445,26 @@ export function Invitation({
       role="dialog"
       aria-modal="true"
       aria-labelledby={questionId}
-      aria-describedby={metaId}
+      aria-describedby={preview ? `${ribbonId} ${metaId}` : metaId}
       onKeyDown={onKeyDown}
       className="relative flex h-dvh flex-col items-center justify-center overflow-hidden px-5 text-center"
       style={{
-        paddingTop: "env(safe-area-inset-top)",
+        paddingTop: preview
+          ? `max(env(safe-area-inset-top), ${ribbonBottom + 12}px)`
+          : "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
     >
       <InvitationBackdropLayer backdrop={backdrop} />
       <Decor />
+      {preview && (
+        <PreviewRibbon
+          ref={ribbonRef}
+          exitRef={exitRef}
+          id={ribbonId}
+          onExit={preview.onExit}
+        />
+      )}
 
       <div
         className={`relative z-10 flex w-full max-w-2xl flex-col items-center gap-5 transition-opacity duration-200 ${leaving ? "opacity-0" : "opacity-100"}`}

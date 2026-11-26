@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, acceptInvitation, getCurrentMember, getTrip, listPendingInvitations, listTrips, retryPhoto, setCoverPhoto } from '@/lib/api'
+import { ApiError, acceptInvitation, deleteInvitation, isSessionFailure, updateInvitationQuestion, getCurrentMember, getTrip, listPendingInvitations, listTrips, retryPhoto, setCoverPhoto } from '@/lib/api'
 
 vi.mock('@/lib/auth', () => ({ accessToken: () => Promise.resolve('t') }))
 
@@ -113,5 +113,48 @@ describe('Invitations', () => {
     await expect(getTrip('x')).resolves.toMatchObject({ invitation: null })
     reply({ ...trip, invitation: { ...invitation, status: 'maybe' } })
     await expect(getTrip('x')).rejects.toMatchObject({ code: 'bad-response' })
+  })
+})
+
+describe('the Inviter\'s calls', () => {
+  const invitation = {
+    tripId: 't', question: '¿Vamos?', inviterId: 'a', inviteeId: 'b', status: 'pending', createdAt: '2026-11-26T10:00:00Z', acceptedAt: null,
+  }
+
+  it('edits the question with PUT and reads the Invitation back', async () => {
+    const spy = reply(invitation)
+    await expect(updateInvitationQuestion('trip 1', '¿Vamos?')).resolves.toMatchObject({ status: 'pending' })
+    const [url, init] = spy.mock.calls[0]
+    expect(url).toBe('/api/trips/trip%201/invitation')
+    expect(init).toMatchObject({ method: 'PUT', body: JSON.stringify({ question: '¿Vamos?' }) })
+  })
+
+  it('deletes with DELETE and expects no body', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+    await expect(deleteInvitation('t')).resolves.toBeUndefined()
+    expect(spy.mock.calls[0][1]).toMatchObject({ method: 'DELETE' })
+  })
+
+  it('keeps the error code of a refusal', async () => {
+    reply({ error: { code: 'invitation-accepted', message: 'x' } }, 409)
+    await expect(updateInvitationQuestion('t', 'q')).rejects.toMatchObject({ status: 409, code: 'invitation-accepted' })
+  })
+})
+
+describe('isSessionFailure', () => {
+  it('treats 401 and a session-level 403 as the end of the login', () => {
+    expect(isSessionFailure(new ApiError(401, 'unauthorized'))).toBe(true)
+    expect(isSessionFailure(new ApiError(403, 'not-a-member'))).toBe(true)
+    expect(isSessionFailure(new ApiError(403, 'unknown'))).toBe(true)
+  })
+
+  it('keeps the Member in for a 403 that only refuses the action', () => {
+    expect(isSessionFailure(new ApiError(403, 'not-the-inviter'))).toBe(false)
+    expect(isSessionFailure(new ApiError(403, 'not-the-invitee'))).toBe(false)
+  })
+
+  it('ignores everything else', () => {
+    expect(isSessionFailure(new ApiError(409, 'invitation-accepted'))).toBe(false)
+    expect(isSessionFailure(new Error('x'))).toBe(false)
   })
 })

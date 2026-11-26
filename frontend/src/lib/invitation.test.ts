@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QUESTION_LIMIT, appendPending, questionFollows, suggestedQuestion, validateQuestion } from '@/lib/invitation'
+import { QUESTION_LIMIT, appendPending, normalizeQuestion, questionFollows, suggestedQuestion, validateQuestion } from '@/lib/invitation'
 
 describe('the suggested question', () => {
   it('names the trimmed destination', () => {
@@ -30,5 +30,11 @@ describe('appendPending', () => {
   const inv = (tripId: string) => ({ tripId })
   it('keeps the queue order and adds only Invitations it does not have, at the end', () => {
     expect(appendPending([inv('a'), inv('b')], [inv('b'), inv('c'), inv('a')])).toEqual([inv('a'), inv('b'), inv('c')])
+  })
+})
+
+describe('normalizeQuestion', () => {
+  it('trims and collapses runs of whitespace, Enter included', () => {
+    expect(normalizeQuestion('  ¿Te vienes\n\n  conmigo?  ')).toBe('¿Te vienes conmigo?')
   })
 })

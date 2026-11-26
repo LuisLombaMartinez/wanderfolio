@@ -73,13 +73,13 @@ async function journey(page: Page, project: string, shot: (name: string) => Prom
   await expect(page.getByRole('heading', { level: 1, name: 'Escapada a Oporto' })).toBeVisible()
 
   // Delete it after confirming; backing out first keeps it.
-  await page.getByRole('button', { name: 'Borrar' }).click()
+  await page.getByRole('button', { name: 'Borrar', exact: true }).click()
   await expect(page.getByRole('alertdialog')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Mejor no' })).toBeFocused()
   await shot('delete-dialog')
   await page.getByRole('button', { name: 'Mejor no' }).click()
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Borrar' }).click()
+  await page.getByRole('button', { name: 'Borrar', exact: true }).click()
   await page.getByRole('button', { name: 'Sí, borrarlo' }).click()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('status').filter({ hasText: 'Hemos borrado «Escapada a Oporto» del álbum.' })).toBeVisible()

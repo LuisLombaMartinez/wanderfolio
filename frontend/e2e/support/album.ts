@@ -9,7 +9,7 @@ export async function emptyAlbum(page: Page) {
     await expect(cards.first().or(page.getByRole('heading', { name: 'Aquí empezará nuestra historia' }))).toBeVisible()
     if ((await cards.count()) === 0) return
     await cards.first().click()
-    await page.getByRole('button', { name: 'Borrar' }).click()
+    await page.getByRole('button', { name: 'Borrar', exact: true }).click()
     await page.getByRole('button', { name: 'Sí, borrarlo' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Hemos borrado' })).toBeVisible()
   }

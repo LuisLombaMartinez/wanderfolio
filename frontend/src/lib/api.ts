@@ -13,6 +13,19 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 403 codes that say "you may not do this action", not "this login is no good". They keep the
+ * Member signed in. Any other 403 (the gateway's own, or `not-a-member`) still ends the session.
+ */
+const ACTION_REFUSED_CODES: readonly string[] = ['not-the-inviter', 'not-the-invitee']
+
+/** True when an API error means the login itself is no longer valid (401, or a session-level 403). */
+export function isSessionFailure(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false
+  if (err.status === 401) return true
+  return err.status === 403 && !ACTION_REFUSED_CODES.includes(err.code)
+}
+
 export interface Member {
   id: string
   displayName: string
@@ -223,6 +236,16 @@ export const acceptInvitation = (tripId: string, signal?: AbortSignal) =>
   apiRequest('POST', `/trips/${encodeURIComponent(tripId)}/invitation/accept`, undefined, signal).then(
     expectShape(isInvitation),
   )
+
+const invitationPath = (tripId: string) => `/trips/${encodeURIComponent(tripId)}/invitation`
+
+/** Changes the question of a Pending Invitation (Inviter only); resolves to the Invitation, still Pending. */
+export const updateInvitationQuestion = (tripId: string, question: string, signal?: AbortSignal) =>
+  apiRequest('PUT', invitationPath(tripId), { question }, signal).then(expectShape(isInvitation))
+
+/** Deletes a Pending Invitation (Inviter only); the Trip then shows to the Invitee like any other. */
+export const deleteInvitation = (tripId: string, signal?: AbortSignal) =>
+  apiRequest('DELETE', invitationPath(tripId), undefined, signal).then(() => undefined)
 
 /** A file to upload, as the API wants it described. */
 export interface UploadRequestFile {

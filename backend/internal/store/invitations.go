@@ -249,3 +249,85 @@ func acceptCancellation(reasons []types.CancellationReason) acceptOutcome {
 	}
 	return acceptFailed
 }
+
+// ErrInvitationAccepted is returned when a Pending-only change meets an Invitation that has
+// been Accepted: it is frozen.
+var ErrInvitationAccepted = errors.New("invitation already accepted")
+
+// UpdateInvitationQuestion replaces the question of a Pending Invitation and returns the
+// Invitation. The write is conditional on it still being Pending, so an Invitation accepted
+// since the caller read it is refused (ErrInvitationAccepted), never overwritten.
+// ErrNotFound when the Trip has no Invitation. The caller checks that the Member is the Inviter.
+func (s *Store) UpdateInvitationQuestion(ctx context.Context, tripID, question string) (Invitation, error) {
+	out, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(s.table),
+		Key:                       invitationKey(tripID),
+		UpdateExpression:          aws.String("SET question = :q"),
+		ConditionExpression:       aws.String("attribute_exists(pk) AND attribute_not_exists(acceptedAt)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":q": str(question)},
+		ReturnValues:              types.ReturnValueAllNew,
+	})
+	if err != nil {
+		return Invitation{}, s.pendingOnlyError(ctx, tripID, "update invitation", err)
+	}
+	var it invitationItem
+	if err := attributevalue.UnmarshalMap(out.Attributes, &it); err != nil {
+		return Invitation{}, fmt.Errorf("unmarshal invitation: %w", err)
+	}
+	return invitationFromItem(it), nil
+}
+
+// DeleteInvitation removes a Pending Invitation and makes its Trip visible to the Invitee
+// again, in one transaction (the Invitation item carries the PENDING# index keys, the Trip
+// item the hiddenFrom mark). Refused with ErrInvitationAccepted when it was Accepted in the
+// meantime; ErrNotFound when the Trip has no Invitation. The caller checks the Inviter.
+func (s *Store) DeleteInvitation(ctx context.Context, tripID string) error {
+	_, err := s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Delete: &types.Delete{
+				TableName:           aws.String(s.table),
+				Key:                 invitationKey(tripID),
+				ConditionExpression: aws.String("attribute_exists(pk) AND attribute_not_exists(acceptedAt)"),
+			}},
+			{Update: &types.Update{
+				TableName:           aws.String(s.table),
+				Key:                 tripKey(tripID),
+				UpdateExpression:    aws.String("REMOVE hiddenFrom"),
+				ConditionExpression: aws.String("attribute_exists(pk)"),
+			}},
+		},
+	})
+	if err == nil {
+		return nil
+	}
+	var cancelled *types.TransactionCanceledException
+	if errors.As(err, &cancelled) {
+		switch acceptCancellation(cancelled.CancellationReasons) {
+		case acceptTripGone:
+			return ErrNotFound
+		case acceptAlreadyDone:
+			return s.pendingOnlyError(ctx, tripID, "delete invitation", err)
+		}
+	}
+	return fmt.Errorf("delete invitation: %w", err)
+}
+
+// pendingOnlyError turns a failed Pending-only write into ErrInvitationAccepted or
+// ErrNotFound when the condition failed, by reading what is stored; anything else is err.
+func (s *Store) pendingOnlyError(ctx context.Context, tripID, what string, err error) error {
+	var failed *types.ConditionalCheckFailedException
+	var cancelled *types.TransactionCanceledException
+	if !errors.As(err, &failed) && !errors.As(err, &cancelled) {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	cur, gerr := s.GetInvitation(ctx, tripID)
+	switch {
+	case errors.Is(gerr, ErrNotFound):
+		return ErrNotFound
+	case gerr != nil:
+		return fmt.Errorf("%s: %w", what, gerr)
+	case !cur.Pending():
+		return ErrInvitationAccepted
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}

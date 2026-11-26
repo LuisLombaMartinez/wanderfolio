@@ -1013,6 +1013,143 @@ Extends section 23. Codes as the Go API names them; the builder aligns the keys 
 10. `ui-ux-pro-max` searches for the disclosure toggle and the full-screen takeover returned no matching guideline; those choices follow the built-in defaults (visible labels, focus trap, visible focus) and this file's existing rules.
 11. Built differently from the sections above (builder, ticket #62): the gate wraps every route at the app level (around `Routes` and the `UploadBar`) rather than inside each `RequireMember`, so the queue survives the route change after "Sí"; it holds the boot screen only for a signed-in Member. The switch is a native `button role="switch"` styled with tokens, not the Radix one, to avoid a new dependency.
 
+## 54. Invitation panel on the Trip page (`InvitationPanel`, ticket #66)
+The Inviter looks after their Invitation from the Trip page (section 20). The panel shows when the Trip detail has an `invitation` and `invitation.inviterId` is the current Member. For anyone else it renders nothing in this ticket. Ticket #67 decides what both Members see once it is Accepted ("Ver invitación"), and it fills the slot named below.
+
+**Placement.**
+- **Mobile (390x844):** between the actions row (section 20, item 5) and the Countdown (item 6), 24px below the actions and 32px above the Countdown. Full content width.
+- **Desktop (>= 1024px):** in the right column, under the Trip actions and above the Countdown, at full column width. When the column gets taller than the cover, it aligns to the top instead of being centred on the cover.
+- **Tablet:** the mobile order, as on the rest of the page.
+
+**Card.** White `--card`, 24px radius, pink shadow, 20px padding (24px from 640px), with a 1px `--border` hairline. It is a `<section>` with `aria-labelledby` its heading. Top to bottom:
+1. **Head row:**
+   - Left: a 56x56 swatch (16px radius) filled with `--gradient-sunset`, holding `Gift` (22px, `--primary`, on a white 60% circle of 36px). The swatch is a tiny Invitation, not a missing-Photo placeholder, so it has no "sin fotos" label (same rule as section 47). It is `aria-hidden`. **Slot for #63:** with a Backdrop, the swatch shows the Backdrop image (`object-fit: cover`) instead of the gradient. If that image fails, it falls back to the gradient.
+   - Middle: the script kicker "tu sorpresa" (Great Vibes 24px, `--primary`, `aria-hidden`) over the `h2` "Tu invitación" (Cormorant 700, 24px).
+   - Right on desktop, under the heading on mobile at 390: the status badge (section 55).
+2. **The question,** quoted as the Invitee will see it: Cormorant 600 italic, 22px/1.25, `--foreground`, inside « », `text-balance`, at most 4 lines (the 120-character limit keeps it there at 390). It is a `<blockquote>`, rendered as plain text with whitespace collapsed, exactly as section 47 does it.
+3. **Status hint,** one line in 15px `--muted-foreground`:
+   - Pending: "Aún no ha dicho que sí. El viaje sigue siendo tu secreto."
+   - Accepted: "Este momento se queda así para siempre."
+4. **Actions** (Pending only), 16px above:
+   - Row 1, full width: `soft` pill "Ver cómo queda" with `Eye`. It opens the preview (section 57).
+   - Row 2, two equal pills with a 12px gap: `soft` "Editar" with `Pencil` (accessible name "Editar la pregunta") and `ghost` "Borrar" with `Trash2` (`--secondary-foreground`, accessible name "Borrar la invitación"). All 48px tall. At 390 each one in row 2 is about 145px wide, which stays above the 120px minimum.
+   - The panel's Editar and Borrar act on the Invitation, while the page's own Editar and Borrar (section 20) act on the Trip. The heading and the accessible names tell them apart, and the panel's pills sit inside the card, never in the page's actions row.
+   - **Accepted:** no actions in this ticket. The space under the hint is the **slot for #67's "Ver invitación"**. Until #67 lands, the card simply ends after the hint.
+
+**States.**
+- **Loading:** the panel comes with the Trip detail, so it has no loading state of its own. The section 20 skeleton covers the page, and the panel appears with the rest of the text column.
+- **Error:** the Trip page's error card (section 20) covers it. Errors from the panel's own actions are inline (sections 56 and 58).
+- **No Invitation, or not the Inviter:** no panel and no gap left behind.
+- **Missing image:** there is no Photo here. The gradient swatch is the designed default, and the #63 Backdrop falls back to it.
+
+**Motion.** The panel belongs to the text column's entrance (section 20: opacity, y 24px→0, 0.5s `power2.out`) as the next item in its stagger, right after the actions row. Switching between view and edit (section 56) is a 150ms opacity cross-fade of the card's body (the head row stays still). Removal after a delete is in section 58. **Reduced motion:** no entrance, and the switches happen at once.
+
+## 55. Invitation status badge (`InvitationStatusBadge`, ticket #66)
+A pill, 32px tall, 14px horizontal padding, Nunito 700 14px, 16px icon, 6px gap. It never wraps (`white-space: nowrap`). The longest text, "aceptada el 30 sept 2026", is about 200px and fits at 390. The text is lowercase, as the spec quotes it.
+
+| Status | Look | Text |
+|---|---|---|
+| Pending | `--secondary` fill, `--secondary-foreground` text, 1px dashed `--primary` at 40% border, `Hourglass` icon | "pendiente" |
+| Accepted | `--primary` fill, white text, the pink shadow, `HeartHandshake` icon | "aceptada el {fecha}" |
+
+- The meaning never depends on colour alone: each status has its own icon, its own word and its own border style (dashed while waiting, solid once it is done).
+- `{fecha}` is the local calendar date of `acceptedAt`. Convert the UTC timestamp to the viewer's time zone first, then format it as a single date with the section 18 helper (es-ES, day plus short month without the period, plus the year), e.g. "aceptada el 12 may 2027". The badge never shows a time.
+- Accessibility: the badge is text, not a live region. Screen readers read it as "Estado de la invitación: pendiente" (a visually hidden prefix inside the badge). When the status changes inside the page (section 56, `invitation-accepted`), the one announcement comes from the panel's status line, not from the badge.
+- The status comes from the Trip detail when the page loads. The badge does not poll. Coming back to the Trip page, or a page reload, shows the latest status.
+- **Motion:** none of its own. When the panel learns from a failed edit or delete that the Invitation was Accepted meanwhile, the badge swaps in place with a 200ms cross-fade. **Reduced motion:** the swap happens at once.
+
+## 56. Editing the question (inline, ticket #66)
+"Editar" turns the panel's body into an editor in place (no dialog, no new route). The question stays in the same spot where the Inviter was reading it.
+
+**Editor (Pending only):**
+- The `<blockquote>` and the hint are replaced by the section 51 field: label "La pregunta", a `<textarea>` (2 rows, grows up to 4, no `maxLength`), the counter that is always visible ("{n}/120", counting code points), and the same hint under it. The textarea starts with the saved question. On open, focus moves into it with the caret at the end.
+- **Slot for #63:** the Backdrop picker goes under the question, as in the form (section 51). This ticket leaves nothing in its place.
+- Buttons under the field: `yes` "Guardar pregunta" with `Heart`, and `ghost` "Cancelar". On mobile they stack full width (save on top, 12px gap); from 480px they sit in one row, right-aligned, with Cancelar on the left. The head row, with the badge "pendiente", stays visible above the editor.
+- "Cancelar" or Escape (inside the editor) drops the edit without asking (same rule as section 21) and goes back to view mode. Focus returns to "Editar".
+- While the editor is open, "Ver cómo queda" is hidden. The preview always shows the saved question (decision 3, section 59).
+
+**Validation:** the same rules, timing and Spanish as section 51 ("Escribe la pregunta que quieres hacerle.", "Que quepa en un suspiro: máximo 120 caracteres."). The field is checked on save, then live after the first failed save. The question is trimmed, and runs of whitespace (Enter included) collapse to one space before it is checked and sent, as on creation. If the trimmed text equals the saved question, the editor closes with no request.
+
+**Saving:**
+- The button reads "Guardando…" and is disabled (the heart pulses once per second; static with reduced motion), and the textarea is read-only.
+- **Success:** back to view mode with the new question, and a status line inside the card, under the hint (`role="status"`, 15px, `Check` icon, `--secondary` pill): "Pregunta guardada. Así se la encontrará." It fades out after 4s. Focus returns to "Editar".
+- **Accepted meanwhile** (`invitation-accepted`): the editor closes, the badge becomes "aceptada el {fecha}" (section 55, using the Invitation the response returns, or a refetch of the Trip), the actions go away, and the status line reads "Llegas tarde: ya ha dicho que sí, así que la pregunta se queda como estaba." Focus moves to the panel `h2`.
+- **Invitation gone** (`invitation-not-found`, e.g. deleted from another tab): the panel goes away (section 58 motion) and the page status line reads "Esta invitación ya no existe." **Trip gone** (`trip-not-found`): the section 20 not-found card.
+- **Failure** (network, `internal`): the editor stays open with the text kept, and an inline alert sits above the buttons (`role="alert"`, `AlertCircle`, as in section 22): "No hemos podido guardarla. ¿Probamos otra vez?"
+
+**Motion:** the view/edit cross-fade from section 54. Field errors appear as in section 21. **Reduced motion:** the swaps and errors appear at once.
+
+## 57. Preview (`Invitation` in `preview` mode, ticket #66)
+"Ver cómo queda" opens the reusable Invitation (section 47) full screen, with the saved question, the Trip's destination and dates, and its backdrop (the gradient, or #63's image). The dodge, the growth, the entrance and the "Sí" transition are the real ones, so the Inviter sees exactly what the Invitee will. Two things make it plainly a rehearsal: a ribbon, and a way out.
+
+**Preview ribbon (`PreviewRibbon`).** It is the only visual difference on the Invitation itself:
+- Fixed at the top, centred, 12px below the top safe area. On mobile it is full width minus 2x16px; on desktop it is at most 560px wide. Pill, 48px min height, `--foreground` (plum) at 92% with `backdrop-blur`, white text, `z` above the Invitation content and below the transition circle.
+- Left: `Eye` (18px). Text (Nunito 700 15px, then 400): "Vista previa" + " · Tu sí aquí no cuenta". At 390 the second part wraps under the first, still inside the pill.
+- Right: a white `ghost` pill "Salir" with `X`, 44px tall, inside the ribbon.
+- Plum on the pink sunset reads as "not part of the Invitation". The same plum is the app's destructive and photo-stage colour (sections 22 and 32), and the Invitation itself never uses it. White on plum is above 14:1.
+- The ribbon's box (padded 8px) is a dodge obstacle in `lib/dodge.ts`, like the question and the meta line, so "No" never hides under it. The top margin for "No" grows by the ribbon's height.
+- It has no animation of its own: it is there from the first frame, with the backdrop's opacity fade, so the Inviter never sees a moment that looks like the real Invitation.
+
+**What else differs from the real Invitation (section 47):**
+- **There is a way out.** "Salir" and Escape close the preview at any point before the transition. Focus returns to "Ver cómo queda". The browser Back button also closes it (the preview pushes `?vista=previa` onto the Trip URL, the same pattern as the viewer's `?foto=`, so Back on Android works). Reloading with that parameter goes straight back into the preview.
+- **Dialog semantics:** the same `role="dialog"` and `aria-modal`, named by the question and described by the ribbon text plus the meta line, so a screen reader hears "Vista previa" first. Focus starts on "Sí", and the trap cycles Sí → No (dodges) → Salir.
+- `<title>`: "Vista previa · Viajecito".
+- The kicker "para ti", the "No" phrases and the "Sí" growth are the same as in the real Invitation.
+- **"Sí" records nothing.** No request is made. `Transition` gets `outcome: Promise.resolve('reveal')` (section 50, #62 handoff), so the hearts and the circle play and the "Guardando tu sí…" hold never shows. Then, instead of navigating:
+  1. The circle covers the screen, the Invitation unmounts, and the circle fades out (0.5s) over the same Trip page, which never left.
+  2. Focus goes to "Ver cómo queda". A status line appears inside the panel (`role="status"`, the section 56 pill, `Sparkles` icon): "Así le llegará tu sorpresa. Tranquilidad: su respuesta de verdad aún está por llegar." It fades out after 5s.
+  3. The badge still reads "pendiente", which shows nothing changed.
+- The page under the preview stays mounted, `inert` and `aria-hidden`, with body scroll locked, as in the gate's resume overlay (section 48).
+- **Gate wins:** if the Inviter has their own Pending Invitation (as Invitee) and the gate shows it while a preview is open, the preview closes first, without a transition.
+- **Accepted:** there is no preview. Replay is #67's "Ver invitación", which is not a preview: it has no ribbon, because both Members relive the real moment.
+
+**Mobile (390x844).** The Invitation layout from section 47 shifts down by the ribbon's height plus 12px (it is still centred in the remaining space). With a 120-character question, the grown "Sí" (2.6) still fits without scrolling. The builder checks this with a screenshot at 390x844 and at a 360px-tall landscape.
+**Desktop.** The ribbon is a centred pill at the top. The rest is as section 47.
+
+**Motion:** the section 47 entrance and the section 50 transition, minus the hold. Closing with "Salir", Escape or Back fades the Invitation out in 200ms. **Reduced motion:** the section 47 reduced-motion rules apply, and the ribbon shows at once. "Sí" cross-fades the Invitation out (200ms) straight to the Trip page, with no heart or circle, and then the status line shows.
+
+## 58. Deleting the Invitation (`DeleteInvitationDialog`, ticket #66)
+Same family as section 22: `alertdialog`, centred card, overlay, "Mejor no" `soft` with **initial focus**, and the plum `destructive` button. The buttons are stacked on mobile (cancel on top) and in one row from 480px. It opens from the panel's "Borrar" (Pending only).
+
+- Top: the 64px `--secondary` circle with `Gift` (28px, `--primary`).
+- Title (Cormorant 700, 26px): "¿Cancelamos la sorpresa?"
+- Text (16px, `--muted-foreground`): "La invitación desaparecerá y «{title}» aparecerá en su álbum como cualquier otro viaje. No hay vuelta atrás." (Trip title truncated after 60 characters, as in section 22.) The text says what the Invitee will see, since revealing the Trip is the real consequence.
+- Buttons: "Mejor no" / "Sí, borrarla" (`Trash2`).
+- **Deleting:** the button reads "Borrando…", both buttons are disabled, and Escape and the overlay do nothing until it ends.
+- **Success** (204), or `invitation-not-found` (already gone): the dialog closes and the panel leaves the page. The Trip page shows a status line above the cover, in the section 18 pill (`role="status"`, `Check`): "Sorpresa cancelada. «{title}» ya está en su álbum." It fades out after 5s. Focus moves to the Trip `h1`.
+- **Accepted meanwhile** (`invitation-accepted`): the dialog closes, the panel switches to Accepted (section 55), and its status line reads "Ya ha dicho que sí, así que esta invitación se queda." Focus moves to the panel `h2`.
+- **Trip gone** (`trip-not-found`): close, and the section 20 not-found card.
+- **Failure** (network, `internal`): the dialog stays open with the section 22 inline alert: "No hemos podido borrarla. ¿Probamos otra vez?" A retry is safe.
+- **Motion:** the dialog fades as in section 22. After success the panel shrinks and fades (scale 1→.96, opacity 1→0, 200ms `power2.in`). The column then closes the gap with no animation (section 10: no height animation). **Reduced motion:** the panel disappears at once.
+
+**Trip delete with a Pending Invitation.** Section 22 (and 35) gains one line under its text when the Trip has a Pending Invitation, in 15px `--secondary-foreground` with `Gift`: "Su invitación se irá con él: nunca llegará a verla." Nothing else changes. The API already deletes both in one transaction (#62).
+
+**API errors in Spanish (additions, ticket #66).** These extend sections 23 and 52. The codes are the expected names, and the builder aligns them with the backend handoff:
+
+| code | where it shows | Spanish |
+|---|---|---|
+| `question-required`, `question-too-long`, `invalid-characters` | the editor's field (section 56) | as in section 52 |
+| `invitation-accepted` (409, frozen) | panel status line (sections 56 and 58) | edit: "Llegas tarde: ya ha dicho que sí, así que la pregunta se queda como estaba." delete: "Ya ha dicho que sí, así que esta invitación se queda." |
+| `invitation-not-found` | edit: page status line; delete: treated as success | "Esta invitación ya no existe." |
+| `not-the-inviter` (403) | not reachable from the UI (the panel shows only for the Inviter); if seen, the generic copy, no sign-out | "Algo ha fallado por el camino. ¿Probamos otra vez?" |
+| `trip-not-found` | section 20 not-found card | section 23 |
+| network, `internal`, unknown | editor or dialog inline alert | "No hemos podido guardarla. ¿Probamos otra vez?" / "No hemos podido borrarla. ¿Probamos otra vez?" |
+
+As in #62, a 403 here must not sign the Member out (see the #62 handoff on `handleApiError`).
+
+## 59. Open decisions (ticket #66, for review in its PR)
+1. The Inviter's controls live in a card on the Trip page ("Tu invitación"), between the Trip actions and the Countdown, rather than in the Trip edit form. Editing happens inline in that card, not in a dialog or on a new route.
+2. The preview is marked by a plum ribbon at the top, "Vista previa · Tu sí aquí no cuenta", with a "Salir" button, and Escape and Back also close it. The Invitation itself is left untouched, so it looks exactly as the Invitee will see it. Alternatives: a dashed frame around the screen, or a watermark.
+3. The preview shows the saved question only. While the editor is open, "Ver cómo queda" is hidden. Alternative: preview the unsaved text from inside the editor.
+4. After "Sí" in the preview, the circle clears over the same Trip page and a reassuring status line follows. Alternative: replay the full transition into a fresh Trip page entrance, as the Invitee gets it.
+5. The badges: "pendiente" is a soft pill with a dashed border and `Hourglass`, and "aceptada el {fecha}" is solid pink with `HeartHandshake`. The date only, never the time, in the viewer's local calendar.
+6. The status is read when the page loads and is not polled. An Inviter sitting on the page while the Invitee says "Sí" sees the change on the next visit, or when an edit or delete is refused.
+7. Copy picks: "tu sorpresa" kicker, "Ver cómo queda", "¿Cancelamos la sorpresa?", "Sorpresa cancelada. «{title}» ya está en su álbum.". "Llegas tarde: ya ha dicho que sí…" is the cheekiest. Plainer: "Ya ha aceptado; la invitación no se puede cambiar."
+8. The Trip delete dialog gains a line about the Pending Invitation, an addition the ticket didn't ask for.
+9. Inside the panel, Editar and Borrar keep the page's short labels, and their accessible names add "la pregunta" and "la invitación". Alternative: longer visible labels stacked full width (taller card at 390).
+10. Slots left for later tickets: the swatch image, the editor's Backdrop picker and the preview's image backdrop for #63, and the Accepted action ("Ver invitación") for #67.
+11. `ui-ux-pro-max`: the badge follows its "compact label stays on one line" and "one contextual status message" guidelines, and the delete follows "confirm before irreversible actions". Its search for a preview or draft-mode indicator found nothing (two queries), so the ribbon follows this file's own rules and the built-in defaults (visible label, a way out, contrast).
+
 ## Decisions (confirmed by the user, Phase 1)
 1. **Palette**: pink / coral / turquoise as defined above.
 2. **Script font**: Great Vibes for short accents only.

@@ -50,3 +50,12 @@ export function tripLengthLabel(startDate: string, endDate: string): string {
   const n = tripLength(startDate, endDate)
   return n === 1 ? '1 día juntos' : `${n} días juntos`
 }
+
+/** The viewer's local calendar day of a UTC timestamp, as "12 may 2027" (never the time); "" if unreadable. */
+export function formatLocalDay(timestamp: string): string {
+  const at = new Date(timestamp)
+  if (Number.isNaN(at.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const day = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+  return formatDateRange(day, day)
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysUntil, formatDateRange, isRealDate, tripLength, tripLengthLabel } from './dates'
+import { daysUntil, formatDateRange, formatLocalDay, isRealDate, tripLength, tripLengthLabel } from './dates'
 
 // `now` values are built with the local-time Date constructor: Trip dates are
 // calendar dates and the countdown uses the viewer's local time (spec #5).
@@ -56,5 +56,18 @@ describe('isRealDate', () => {
     expect(isRealDate('2027-02-29')).toBe(false)
     expect(isRealDate('')).toBe(false)
     expect(isRealDate('2026-1-5')).toBe(false)
+  })
+})
+
+describe('formatLocalDay', () => {
+  it('shows the viewer\'s local calendar day of a UTC timestamp', () => {
+    // Built from the local constructor, so the expectation holds in any time zone.
+    const at = new Date(2027, 4, 12, 23, 30).toISOString()
+    expect(formatLocalDay(at)).toBe('12 may 2027')
+    expect(formatLocalDay(new Date(2026, 0, 1, 0, 5).toISOString())).toBe('1 ene 2026')
+  })
+
+  it('gives an empty string for an unreadable timestamp', () => {
+    expect(formatLocalDay('nope')).toBe('')
   })
 })

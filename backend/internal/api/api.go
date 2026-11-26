@@ -46,6 +46,8 @@ type Store interface {
 	GetInvitation(ctx context.Context, tripID string) (store.Invitation, error)
 	ListPendingInvitations(ctx context.Context, inviteeID string) ([]store.Invitation, error)
 	AcceptInvitation(ctx context.Context, tripID string) (store.Invitation, error)
+	UpdateInvitationQuestion(ctx context.Context, tripID, question string) (store.Invitation, error)
+	DeleteInvitation(ctx context.Context, tripID string) error
 }
 
 // Workflow starts the photo-processing workflow.
@@ -110,6 +112,9 @@ func NewServer(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/media-session", s.withMember(s.mediaSession))
 	mux.HandleFunc("GET /api/invitations/pending", s.withMember(s.listPendingInvitations))
 	mux.HandleFunc("POST /api/trips/{id}/invitation/accept", s.withMember(s.acceptInvitation))
+	mux.HandleFunc("GET /api/trips/{id}/invitation", s.withMember(s.getInvitation))
+	mux.HandleFunc("PUT /api/trips/{id}/invitation", s.withMember(s.updateInvitation))
+	mux.HandleFunc("DELETE /api/trips/{id}/invitation", s.withMember(s.deleteInvitation))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not-found", "no such route")
 	})

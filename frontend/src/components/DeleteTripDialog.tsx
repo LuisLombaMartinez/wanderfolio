@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Trash2 } from 'lucide-react'
+import { AlertCircle, Gift, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { ApiError, deleteTrip, type Trip } from '@/lib/api'
@@ -112,6 +112,12 @@ export function DeleteTripDialog({ trip, open, onOpenChange, onDeleted, onAuthEr
         <p role="status" className="sr-only">
           {busy && slow ? 'Borrando el viaje y sus fotos…' : ''}
         </p>
+        {trip.invitation?.status === 'pending' && (
+          <p className="mt-3 flex items-center justify-center gap-2 text-[15px] text-secondary-foreground">
+            <Gift aria-hidden="true" className="size-4 shrink-0" />
+            Su invitación se irá con él: nunca llegará a verla.
+          </p>
+        )}
         {inFlight && (
           <p className="mt-3 flex items-center justify-center gap-2 text-[15px] text-secondary-foreground">
             <AlertCircle aria-hidden="true" className="size-4 shrink-0" />

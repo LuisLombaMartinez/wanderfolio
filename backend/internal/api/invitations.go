@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -182,4 +184,116 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, m stor
 		return
 	}
 	writeJSON(w, http.StatusOK, toInvitationJSON(inv))
+}
+
+// inviterInvitation loads the Trip's Invitation for a route only its Inviter may use. It
+// answers the error itself and returns false when the route must stop: the Trip is missing
+// or hidden from the Member (404 trip-not-found), has no Invitation (404), or the Member is
+// not the Inviter (403).
+func (s *server) inviterInvitation(w http.ResponseWriter, r *http.Request, m store.Member) (store.Invitation, bool) {
+	tripID := r.PathValue("id")
+	if !validID(tripID) {
+		tripNotFound(w)
+		return store.Invitation{}, false
+	}
+	if _, err := s.visibleTrip(r.Context(), tripID, m); s.tripError(w, r, err) {
+		return store.Invitation{}, false
+	}
+	inv, err := s.store.GetInvitation(r.Context(), tripID)
+	if s.invitationError(w, r, err) {
+		return store.Invitation{}, false
+	}
+	if inv.InviterID != m.ID {
+		writeError(w, http.StatusForbidden, "not-the-inviter", "only the Inviter can change this Invitation")
+		return store.Invitation{}, false
+	}
+	return inv, true
+}
+
+// invitationError answers a store error of an Invitation route and reports whether it did.
+func (s *server) invitationError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "invitation-not-found", "this Trip has no Invitation")
+	case errors.Is(err, store.ErrInvitationAccepted):
+		writeError(w, http.StatusConflict, "invitation-accepted", "an accepted Invitation can no longer be changed")
+	default:
+		internalError(w, r, err)
+	}
+	return true
+}
+
+// getInvitation shows the Trip's Invitation to its Inviter at any time, and to the Invitee
+// once Accepted. While Pending, the Invitee's Trip is hidden, so they get trip-not-found.
+func (s *server) getInvitation(w http.ResponseWriter, r *http.Request, m store.Member) {
+	tripID := r.PathValue("id")
+	if !validID(tripID) {
+		tripNotFound(w)
+		return
+	}
+	if _, err := s.visibleTrip(r.Context(), tripID, m); s.tripError(w, r, err) {
+		return
+	}
+	inv, err := s.invitationFor(r.Context(), tripID, m)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if inv == nil {
+		writeError(w, http.StatusNotFound, "invitation-not-found", "this Trip has no Invitation")
+		return
+	}
+	writeJSON(w, http.StatusOK, inv)
+}
+
+// updateInvitation changes the question of a Pending Invitation (Inviter only).
+func (s *server) updateInvitation(w http.ResponseWriter, r *http.Request, m store.Member) {
+	cur, ok := s.inviterInvitation(w, r, m)
+	if !ok {
+		return
+	}
+	if !cur.Pending() {
+		s.invitationError(w, r, store.ErrInvitationAccepted)
+		return
+	}
+	var in invitationInput
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid-body", "the request body is not valid JSON")
+		return
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid-body", "the request body must be a single JSON object")
+		return
+	}
+	q, code, msg := validateQuestion(in.Question)
+	if code != "" {
+		writeError(w, http.StatusUnprocessableEntity, code, msg)
+		return
+	}
+	inv, err := s.store.UpdateInvitationQuestion(r.Context(), cur.TripID, q)
+	if s.invitationError(w, r, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, toInvitationJSON(inv))
+}
+
+// deleteInvitation removes a Pending Invitation and shows its Trip to the Invitee (Inviter only).
+func (s *server) deleteInvitation(w http.ResponseWriter, r *http.Request, m store.Member) {
+	cur, ok := s.inviterInvitation(w, r, m)
+	if !ok {
+		return
+	}
+	if !cur.Pending() {
+		s.invitationError(w, r, store.ErrInvitationAccepted)
+		return
+	}
+	if s.invitationError(w, r, s.store.DeleteInvitation(r.Context(), cur.TripID)) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }

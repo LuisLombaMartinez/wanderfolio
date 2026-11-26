@@ -154,5 +154,14 @@ export const INVITATION_MESSAGES: Record<string, string> = {
   'question-required': 'Escribe la pregunta que quieres hacerle.',
   'question-too-long': 'Que quepa en un suspiro: máximo 120 caracteres.',
 }
+/** The Inviter's care of a Pending Invitation (design/MASTER.md sections 56-58). */
+export const QUESTION_SAVED = 'Pregunta guardada. Así se la encontrará.'
+export const EDIT_TOO_LATE = 'Llegas tarde: ya ha dicho que sí, así que la pregunta se queda como estaba.'
+export const DELETE_TOO_LATE = 'Ya ha dicho que sí, así que esta invitación se queda.'
+export const INVITATION_NOT_THERE = 'Esta invitación ya no existe.'
+export const EDIT_FAILED = 'No hemos podido guardarla. ¿Probamos otra vez?'
+export const DELETE_FAILED = 'No hemos podido borrarla. ¿Probamos otra vez?'
+export const PREVIEW_DONE = 'Así le llegará tu sorpresa. Tranquilidad: su respuesta de verdad aún está por llegar.'
+export const surpriseCancelled = (title: string) => `Sorpresa cancelada. «${title}» ya está en su álbum.`
 export const ACCEPT_FAILED = 'Tu sí no ha llegado a su destino. ¿Lo intentamos otra vez?'
 export const INVITATION_GONE = 'Esa invitación ya no existe. Puede que hayan cambiado de planes.'

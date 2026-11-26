@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ApiError, getCurrentMember, type Member } from '@/lib/api'
+import { ApiError, getCurrentMember, isSessionFailure, type Member } from '@/lib/api'
 import * as auth from '@/lib/auth'
 import { startMediaSession, stopMediaSession } from '@/lib/media'
 import { cancelAll } from '@/lib/upload-store'
 import { errorMessage } from '@/lib/messages'
 import { AuthContext, type AuthState } from './auth-context'
 
-const isAuthFailure = (err: unknown) => err instanceof ApiError && (err.status === 401 || err.status === 403)
+const isAuthFailure = isSessionFailure
 
 /** Knows whether a Member is logged in, and who. */
 export function AuthProvider({ children }: { children: ReactNode }) {

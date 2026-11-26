@@ -14,9 +14,14 @@ export function questionFollows(question: string, destination: string): boolean 
   return question === suggestedQuestion(destination)
 }
 
+/** The question as it is saved: trimmed, with every run of whitespace (Enter included) as one space. */
+export function normalizeQuestion(question: string): string {
+  return question.replace(/\s+/g, ' ').trim()
+}
+
 /** The same checks as the API, with the Spanish texts of MASTER section 52; undefined when valid. */
 export function validateQuestion(question: string): string | undefined {
-  const q = question.trim()
+  const q = normalizeQuestion(question)
   if (!q) return INVITATION_MESSAGES['question-required']
   if (Array.from(q).length > QUESTION_LIMIT) return INVITATION_MESSAGES['question-too-long']
   return undefined
