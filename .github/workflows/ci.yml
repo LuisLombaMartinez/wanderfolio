@@ -111,7 +111,24 @@ jobs:
       # Known-vulnerability audit of the production dependencies; fails on high or critical.
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
-      - run: npm test
+      # Vitest fails the step when lines, branches or functions drop below the floors in vite.config.ts.
+      - run: npm run test:coverage
+      - name: Coverage summary
+        if: always()
+        run: |
+          [ -f coverage/coverage-summary.json ] || exit 0
+          {
+            echo "### Frontend coverage"
+            echo "| lines | branches | functions | statements |"
+            echo "|---|---|---|---|"
+            jq -r '.total | "| \(.lines.pct)% | \(.branches.pct)% | \(.functions.pct)% | \(.statements.pct)% |"' coverage/coverage-summary.json
+            echo
+            echo "Lowest files by lines:"
+            echo
+            echo "| file | lines |"
+            echo "|---|---|"
+            jq -r --arg root "$PWD/" 'to_entries | map(select(.key != "total")) | sort_by(.value.lines.pct) | .[:5][] | "| \(.key | ltrimstr($root)) | \(.value.lines.pct)% |"' coverage/coverage-summary.json
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: npm run build
 
   backend:
@@ -146,10 +163,15 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
           "$(go env GOPATH)/bin/govulncheck" ./...
-      - run: go test ./...
+      # -coverpkg=./... credits a package for code that other packages' tests run (the API tests drive the
+      # store and media code). coverage-check.sh holds the floor and writes the job summary.
+      - run: go test -coverpkg=./... -coverprofile=coverage.out ./...
         working-directory: backend
         env:
           AWS_ENDPOINT_URL: http://localhost:${{ env.FLOCI_PORT }}
+      - name: Coverage floor
+        working-directory: backend
+        run: bash scripts/coverage-check.sh coverage.out
       - if: always()
         run: docker compose -f infra/local/docker-compose.yml down --volumes
 
@@ -181,9 +203,20 @@ jobs:
         run: |
           docker compose -f infra/local/docker-compose.yml up -d
           for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:${FLOCI_PORT}/_floci/health" >/dev/null && break; sleep 1; done
-      - run: pytest
+      # pytest-cov enforces fail_under from pyproject.toml.
+      - run: pytest --cov
         env:
           AWS_ENDPOINT_URL: http://localhost:${{ env.FLOCI_PORT }}
+      - name: Coverage summary
+        if: always()
+        run: |
+          [ -f .coverage ] || exit 0
+          {
+            echo "### Python processing coverage"
+            coverage report --precision=2 --format=markdown --sort=cover | head -7
+            echo
+            coverage report --precision=2 | tail -1
+          } >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         working-directory: .
         run: docker compose -f infra/local/docker-compose.yml down --volumes
@@ -235,8 +268,8 @@ jobs:
           echo "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  actionlint.tar.gz" | sha256sum -c -
           tar -xzf actionlint.tar.gz actionlint
           ./actionlint -color
-      - name: shellcheck the wizard, local and repo scripts
-        run: shellcheck infra/scripts/*.sh scripts/*.sh
+      - name: shellcheck the wizard, local, backend and repo scripts
+        run: shellcheck infra/scripts/*.sh backend/scripts/*.sh scripts/*.sh
       - name: No personal data in the tree (#72)
         run: scripts/check-public-safe.sh
 
