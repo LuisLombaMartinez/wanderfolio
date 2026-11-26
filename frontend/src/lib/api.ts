@@ -59,6 +59,29 @@ export interface Trip {
   coverPhoto: CoverPhoto | null
   /** Date taken order, oldest first. Absent in the Trip list. */
   photos?: Photo[]
+  /**
+   * The Trip's Invitation, when this Member may read it (the Inviter always, both once Accepted);
+   * null otherwise. Absent in the Trip list.
+   */
+  invitation?: Invitation | null
+}
+
+/** An Invitation as the API shows it. `acceptedAt` is null while Pending. */
+export interface Invitation {
+  tripId: string
+  question: string
+  inviterId: string
+  inviteeId: string
+  status: 'pending' | 'accepted'
+  createdAt: string
+  acceptedAt: string | null
+}
+
+/** A Pending Invitation for the current Member, with what it needs to render while its Trip is hidden. */
+export interface PendingInvitation extends Invitation {
+  destination: string
+  startDate: string
+  endDate: string
 }
 
 /** Calls the API under /api as the logged-in Member; throws an `ApiError` on any error response. */
@@ -123,9 +146,33 @@ export function isCoverPhoto(v: unknown): v is CoverPhoto {
   )
 }
 
+export function isInvitation(v: unknown): v is Invitation {
+  return (
+    isRecord(v) &&
+    typeof v.tripId === 'string' &&
+    typeof v.question === 'string' &&
+    typeof v.inviterId === 'string' &&
+    typeof v.inviteeId === 'string' &&
+    (v.status === 'pending' || v.status === 'accepted') &&
+    typeof v.createdAt === 'string' &&
+    (v.acceptedAt === null || typeof v.acceptedAt === 'string')
+  )
+}
+
+export function isPendingInvitation(v: unknown): v is PendingInvitation {
+  return (
+    isInvitation(v) &&
+    isRecord(v) &&
+    typeof v.destination === 'string' &&
+    typeof v.startDate === 'string' &&
+    typeof v.endDate === 'string'
+  )
+}
+
 export function isTrip(v: unknown): v is Trip {
   return (
     isRecord(v) &&
+    (v.invitation === undefined || v.invitation === null || isInvitation(v.invitation)) &&
     typeof v.photoCount === 'number' &&
     Array.isArray(v.thumbnails) &&
     v.thumbnails.every((t) => typeof t === 'string') &&
@@ -158,6 +205,24 @@ export const listTrips = (signal?: AbortSignal) =>
     .then((r) => r.trips)
 
 export type TripInput = Pick<Trip, 'title' | 'destination' | 'startDate' | 'endDate'> & { description: string }
+
+/** Creating a Trip may add its Invitation (only then: the API refuses one on an existing Trip). */
+export type NewTripInput = TripInput & { invitation?: { question: string } }
+
+const isPendingList = (v: unknown): v is { invitations: PendingInvitation[] } =>
+  isRecord(v) && Array.isArray(v.invitations) && v.invitations.every(isPendingInvitation)
+
+/** The current Member's Pending Invitations as Invitee, oldest first (as the API orders them). */
+export const listPendingInvitations = (signal?: AbortSignal) =>
+  apiGet('/invitations/pending', signal)
+    .then(expectShape(isPendingList))
+    .then((r) => r.invitations)
+
+/** Says "Sí" to the Invitation of a Trip; idempotent, so a retry keeps the first acceptance. */
+export const acceptInvitation = (tripId: string, signal?: AbortSignal) =>
+  apiRequest('POST', `/trips/${encodeURIComponent(tripId)}/invitation/accept`, undefined, signal).then(
+    expectShape(isInvitation),
+  )
 
 /** A file to upload, as the API wants it described. */
 export interface UploadRequestFile {
@@ -216,7 +281,7 @@ export const retryPhoto = (tripId: string, photoId: string, signal?: AbortSignal
 
 export const getTrip = (id: string, signal?: AbortSignal) =>
   apiGet(`/trips/${encodeURIComponent(id)}`, signal).then(expectShape(isTrip))
-export const createTrip = (input: TripInput) => apiRequest('POST', '/trips', input).then(expectShape(isTrip))
+export const createTrip = (input: NewTripInput) => apiRequest('POST', '/trips', input).then(expectShape(isTrip))
 export const updateTrip = (id: string, input: TripInput) =>
   apiRequest('PUT', `/trips/${encodeURIComponent(id)}`, input).then(expectShape(isTrip))
 export const deleteTrip = (id: string, signal?: AbortSignal) =>

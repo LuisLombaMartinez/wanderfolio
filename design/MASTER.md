@@ -1,6 +1,6 @@
 # Viajecito — Design System (MASTER)
 
-Phase 1 source: `specs/PRODUCT.md`. Phase 2 (the Album, spec #5) extends it from section 14 on (Photos: sections 27-31; viewer, captions and delete: 32-37; Cover photo: 38-41; failed Photos, retry and HEIF: 42-46); sections 1-5 and 10-13 apply to every screen.
+Phase 1 source: `specs/PRODUCT.md`. Phase 2 (the Album, spec #5) extends it from section 14 on (Photos: sections 27-31; viewer, captions and delete: 32-37; Cover photo: 38-41; failed Photos, retry and HEIF: 42-46). The Invitations spec (#6) extends it from section 47 on (reusable Invitation, takeover on app open, queue and the Trip form option: 47-53); sections 1-5 and 10-13 apply to every screen.
 Source: `specs/PRODUCT.md` + `ui-ux-pro-max` searches (`--design-system`, `typography`, `ux`; dials: variance 6, motion 7, density 3).
 Fixed stack: React + Vite + Tailwind + shadcn/ui + GSAP (`useGSAP`). UI copy in Spanish; everything else in English. Mobile-first (390x844), then desktop.
 
@@ -89,7 +89,7 @@ State: React state (`screen: 'invite' | 'inside'`), no router for now; focus mov
 **Reduced motion**: 200ms cross-fade, no hearts or expansion.
 
 ## 8. Screen 2 — Inside (retired in Phase 2)
-Removed by the walking skeleton (#7): the Album (section 16) replaces the Phase 1 entry screen. The Invitation screen (section 6) and its transition (section 7) stay in the codebase for the Invitations spec; where "Sí" leads will be designed there.
+Removed by the walking skeleton (#7): the Album (section 16) replaces the Phase 1 entry screen. The Invitation screen (section 6) and its transition (section 7) stay in the codebase for the Invitations spec; where "Sí" leads will be designed there. Since spec #6, sections 6-7 are the base of the reusable Invitation (section 47) and its transition into the Trip (section 50).
 
 ## 9. Gallery (retired in Phase 2)
 The place gallery, its Wikimedia stand-in photos and their credits are removed. Photos now come only from Members' uploads; the Trip page's Photo grid is designed with the Trips tickets.
@@ -875,6 +875,143 @@ Live-region and status strings: "Volvemos a revelarla", "Volvemos a revelar {n} 
 5. Reordering when a Photo becomes ready is animated with GSAP Flip (skipped beyond 24 moving tiles and with reduced motion). This replaces section 28's "no animation for the move".
 6. The grid has no day headers ("3 dic") even though dates taken are now real. It could group by day in a later ticket.
 7. A Photo with no EXIF date shows its upload date with no marker. Alternative: a subtle "fecha de subida" hint in the viewer meta line (#12).
+
+## 47. Reusable Invitation (`Invitation`, ticket #62)
+The Phase 1 screen (sections 6-7) becomes one component that any Invitation can use. The look, the dodge and the growth stay exactly as in Phase 1; only the text and the background change from one Invitation to the next. Spec #6 aims for the same look and feel as Phase 1, not a pixel-perfect copy.
+
+**Props (the variable parts):**
+- `question`: the Inviter's text, 1-120 characters, already trimmed. Rendered as plain text (never HTML), `text-balance`, and line breaks are collapsed to spaces.
+- `destination` and `startDate`/`endDate`: shown in the meta line (below).
+- `backdrop`: `{ kind: 'gradient' }` in this ticket. **Slot reserved for ticket #63**: `{ kind: 'image', src }` plus its treatment (scrim, fallback while loading, failure). #63 fills it in section 47a. This ticket renders only the gradient and must not invent an image path.
+- `onYes(origin)` and `leaving`, as in Phase 1. The preview and replay modes (where "Sí" records nothing) come with later tickets and are out of this section.
+- Constants unchanged: trigger radius 90px, debounce 150ms, step 0.26, cap 2.6, margin 16px. The pure logic in `lib/dodge.ts` stays the single source of positions, and its unit tests cover "always inside the viewport" and "Sí capped".
+
+**Layout, mobile (390x844).** Full screen `100dvh`, safe areas, no scroll, content centred. Top to bottom:
+1. Kicker "para ti" (Great Vibes 30px, `--primary`, `aria-hidden`), as in Phase 1.
+2. The question as `h1` (Cormorant 700, `text-balance`, max 18ch per line on desktop). The size steps down for long questions so a 120-character question still fits with the reserved "Sí" area:
+   - up to 60 characters: `clamp(2rem, 8vw, 3.5rem)` / 1.1 (the Phase 1 size)
+   - 61-120 characters: `clamp(1.75rem, 6.5vw, 2.75rem)` / 1.15
+   Count characters with `Array.from(question).length` so an emoji counts as one.
+3. Meta line, 16px below the question (Nunito 600 16px, `--secondary-foreground`, centred, wraps onto two lines when needed): `MapPin` 18px `--ocean` + destination (one line, ellipsis after the line width), then on its own line `CalendarHeart` 18px `--ocean` + the date range from the section 18 helper ("30 nov – 9 dic 2026"). The meta line is a dodge obstacle like the question (add its box, padded 8px, to `obstacles`).
+4. The Sí / No row, with the reserved height for the grown "Sí" (section 6).
+- Floating hearts and waves (`Decor`) behind, as in Phase 1.
+
+**Desktop (>= 1024px).** Same centred column, max width 42rem for the text; nothing moves to the side. "No" may roam the whole viewport.
+
+**Background (`InvitationBackdrop`).** Its own layer, the first child of the Invitation, `absolute inset-0`, `z-0`:
+- `gradient` (this ticket): `--gradient-sunset` with the three blurred blobs (pink, coral, turquoise at 15-20%), fully opaque, so nothing of the screen underneath shows through. This is the Phase 1 background; the Phase 1 Trip's replay will use it too.
+- `image`: **reserved for #63 (section 47a)**. The text colours above assume a light background; #63 decides the scrim that keeps them >= 4.5:1.
+- There are no Photos on this screen. The gradient is the designed default, not a missing-Photo placeholder, so it carries no "sin fotos" label.
+
+**Accessibility.**
+- The Invitation is a modal layer: `role="dialog"`, `aria-modal="true"`, `aria-labelledby` the question, `aria-describedby` the meta line. Everything else in the app is `inert` while it is up.
+- Initial focus on "Sí"; Tab goes Sí → No (which dodges on focus, as in Phase 1) and is trapped inside. Escape does nothing: there is no way out except "Sí".
+- `<title>`: "Una invitación para ti · Viajecito".
+- The `aria-live` line with the "No" phrases stays.
+
+**Copy.** The "No" phrases rotate as in Phase 1 (decision #5): "¿Seguro?", "Uy…", "Casi lo pillas", "Piénsatelo bien…", "Ese botón está roto", "Vale, ya me rindo 😄". "No" never gives up.
+
+**Motion.** Phase 1 (sections 6 and 10) unchanged: dodge 0.35s `back.out(1.6)` with ±6° rotation and squash, "Sí" growth 0.3s `back.out(1.7)`, heartbeat glow, floating decor. Entrance when the Invitation appears (section 48): backdrop opacity 0→1 0.4s, then kicker, question, meta line and the button row rise in (opacity, y 20px→0, 0.5s `power2.out`, stagger 0.1s). "No" must not dodge until the entrance ends (ignore triggers for its 0.8s). **Reduced motion:** no entrance (visible at once), no rotation, squash, heartbeat or floating; "No" still dodges with an instant jump and "Sí" still grows, both instant (section 6, rule 7).
+
+### 47a. Backdrop treatment (reserved for ticket #63)
+Empty on purpose. Ticket #63 designs the `image` backdrop here: scrim, text colours on the image, the loading state (show the gradient until the image decodes) and what happens when the image fails (fall back to the gradient, no error shown to the Invitee).
+
+## 48. Invitation takeover on app open (`InvitationGate`, ticket #62)
+The Invitee must see a Pending Invitation before any other screen. A gate sits inside `RequireMember`, around every Member route, and above the `UploadBar`.
+
+**When it asks** (`GET` the current Member's Pending Invitations as Invitee, oldest first):
+1. Right after the session is known (a fresh login or a saved session at boot).
+2. When the tab or installed app becomes visible again (`visibilitychange` to `visible`) after being hidden for at least **5 minutes**. A shorter absence does not ask, so switching to WhatsApp and back doesn't refetch.
+- Never on `/login`. A request is never in flight twice: a resume that happens while one runs is ignored.
+
+**Boot (case 1).** The boot screen from section 14 ("Abriendo nuestro álbum…", heart heartbeat, shown after 200ms) stays up until the Pending request answers, so the Album or a Trip never flashes before the Invitation. If the answer takes over **6 seconds**, or fails, the gate gives up and lets the app through (it fails open: the API already hides the Trip, so nothing is spoiled). It asks again on the next resume. No error is shown for this: the Invitee doesn't know there was anything to fetch.
+
+**Resume (case 2).** The screen the Member was on stays mounted underneath (an upload in progress keeps going, form text is kept) and the Invitation fades in over it as a fixed layer (`z-50`). The page beneath is `inert` and `aria-hidden`, and body scroll is locked. A failed or slow request changes nothing on screen.
+
+**Empty list.** The gate renders its children; nothing visible happens.
+
+**Deep links.** If the Member opened a link to some screen and there is a Pending Invitation, the Invitation shows first; after "Sí" they go to the invited Trip (section 50), not to the link.
+
+## 49. Several Pending Invitations (queue, ticket #62)
+- The gate holds the list as the API returns it (oldest first) and shows one Invitation at a time. The client never re-sorts.
+- After "Sí" on one, the transition routes to its Trip (section 50). The Trip page entrance plays, and **1.5 seconds after the Trip page is revealed** the next Invitation enters over it (section 47 entrance). That short stop lets the Invitee see where their first "Sí" took them before the next surprise.
+- Each Invitation in the queue starts fresh: "No" back in its place, "Sí" at scale 1, the dodge counter at 0.
+- No counter such as "1 de 2" is shown: each Invitation is its own surprise. Screen readers get no extra announcement either; the dialog's label (the new question) is read when focus lands on "Sí".
+- After the last one the Member stays on the last accepted Trip. Its back link "Volver al álbum" works as usual.
+- If a resume (section 48) brings a new Pending Invitation while a queue is still showing, it is appended at the end (deduplicated by id).
+
+## 50. "Sí" transition into the Trip (ticket #62)
+Reuses `components/Transition.tsx` (section 7: hearts burst plus the `--primary` circle grown from "Sí", about 1.4s).
+
+1. Press "Sí": the button beats once (section 7) and is disabled at once, so a double tap sends one request. The accept request starts at the same time as the transition.
+2. The circle covers the screen (0.9s). From here on, what happens next depends on the request:
+   - **Accepted already** (or answered within the cover time): navigate to `/trips/:id` with history `replace`, unmount the Invitation, and fade the circle out over the Trip page (0.5s). The Trip page's own entrance (section 20) plays as the circle clears. Focus moves to the Trip `h1`.
+   - **Still waiting:** the circle holds, full screen, with a white `Heart` (40px) beating in its centre (1.2s) and, after 600ms, the line "Guardando tu sí…" (Nunito 600 17px, white, `role="status"`). When the request succeeds, carry on as above.
+   - **Failed** (network, `internal`, timeout after 10s): the circle shrinks back into "Sí" (0.5s `power2.inOut`), the Invitation is back exactly as it was (same "Sí" size, "No" where it was), and an inline alert appears above the button row: `AlertCircle` + "Tu sí no ha llegado a su destino. ¿Lo intentamos otra vez?" (`role="alert"`, `--card` at 90% pill, `--secondary-foreground`, 15px). "Sí" works again; the alert goes away on the next press.
+   - **The Invitation is gone** (the Inviter deleted it or the Trip meanwhile; the API answers "not found"): skip it. Fade the circle out over the next Pending Invitation if there is one, else over the screen underneath (the Album at boot). Show the section 18 status line on the Album: "Esa invitación ya no existe. Puede que hayan cambiado de planes."
+   - Accepting is idempotent in the API, so a retry after a timeout that actually went through still lands on the Trip.
+3. The hearts burst is decorative (`aria-hidden`).
+
+**Reduced motion:** no beat, hearts or circle. The Invitation cross-fades out (200ms) to a plain `--background` layer with the static heart and, after 600ms, "Guardando tu sí…"; then the Trip page fades in (200ms). On failure the Invitation fades back (200ms) with the alert.
+
+## 51. Trip form: "Añadir invitación" (create only, ticket #62)
+Extends section 21. The option exists only on `/trips/new`. The edit form (`/trips/:id/edit`) doesn't show it, or mention it.
+
+**Placement.** Inside the form card, after "Descripción (opcional)", separated by a 1px `--border` hairline with 24px above and below.
+
+**The switch row (`InvitationToggle`).** A full-width row, 56px min height, the whole row is the hit area:
+- Left: a 40px `--secondary` circle with `Gift` (20px, `--primary`).
+- Middle: label "Añadir invitación" (Nunito 700 17px) and under it "Que el viaje sea una sorpresa hasta que diga que sí." (14px, `--muted-foreground`).
+- Right: a switch (`role="switch"`, `aria-checked`, the label and description wired with `aria-labelledby`/`aria-describedby`). Track 52x32, pill; off: `--muted` with `--border`; on: `--primary`. Thumb white 24px with the pink shadow. Focus-visible: the `--ring` 2px + 2px offset around the track. A new `components/ui/switch.tsx` (shadcn Switch on Radix) styled with tokens only.
+- Off by default.
+
+**When on**, a panel opens under the row (same card, no nested card):
+1. "La pregunta": a `<textarea>`, 2 rows, grows up to 4, no `maxLength` (the limit counts code points, which `maxLength` cannot), Nunito 16px like every input (inputs as section 15).
+   - **Pre-fill:** "¿Te vienes conmigo a {destino}?" with the trimmed "Destino" value. While the Inviter hasn't typed in the question, it follows the Destino field as it changes. Once they edit it, it is theirs and never changes silently. If Destino is empty when the switch turns on: "¿Te vienes conmigo de viaje?", which also follows Destino once it is filled in (until edited).
+   - Hint under it (14px, `--muted-foreground`, `aria-describedby`): "La verá en cuanto abra el álbum. Hasta que diga que sí, este viaje será vuestro secreto… bueno, tuyo."
+   - Counter: always visible on this field, right-aligned, "{n}/120" (14px, `--muted-foreground`; `--secondary-foreground` from 100), with `aria-live="polite"` only from 100. The question is short, so the limit is worth seeing from the start (differs from section 21's "only near the limit" on purpose).
+2. **Slot reserved for ticket #63:** the optional Backdrop picker goes here, under the question. This ticket leaves nothing in its place.
+- Turning the switch off hides the panel and keeps what was typed (turning it on again shows it as it was). When off, nothing about the Invitation is sent.
+- The Inviter is the Member creating the Trip; the Invitee is the other Member. The form never asks who.
+
+**Validation** (same timing as section 21: on submit, then live after the first submit; only while the switch is on). The question is trimmed before checking and sending.
+- Empty after trimming: "Escribe la pregunta que quieres hacerle."
+- Over 120 characters (typing and pasting are allowed; the counter reads e.g. "125/120", the error shows live and the Trip does not save): "Que quepa en un suspiro: máximo 120 caracteres."
+- On a failed submit, focus moves to the first invalid field in form order (the question comes after the Trip fields).
+
+**Submit.** Labels and states as section 21 ("Guardar viaje", "Guardando…"). On success, the Inviter lands on the Trip page like any other new Trip (the status badge comes with a later ticket).
+
+**Motion.** The panel opens with opacity 0→1 and y 8px→0 (200ms `power2.out`) after the layout makes room (no height animation, section 10); it closes at once. The switch thumb slides 150ms `power2.out`. **Reduced motion:** the panel appears and disappears at once; the thumb moves without a slide.
+
+**Mobile vs desktop.** Same structure; the card is already 600px max on desktop. At 390 the row's description wraps onto two lines, and the switch stays vertically centred.
+
+## 52. API errors in Spanish (additions, ticket #62)
+Extends section 23. Codes as the Go API names them; the builder aligns the keys with the backend handoff if they differ.
+
+| code | where it shows | Spanish |
+|---|---|---|
+| `question-required` | "La pregunta" field | "Escribe la pregunta que quieres hacerle." |
+| `question-too-long` | "La pregunta" field | "Que quepa en un suspiro: máximo 120 caracteres." |
+| `invalid-characters` (control characters in the question) | "La pregunta" field via the form banner | section 23's existing copy |
+| `invitation-on-existing-trip` (PUT with an invitation) | form banner (not reachable from the UI) | "Algo ha fallado por el camino. ¿Probamos otra vez?" |
+| `invitee-missing` (409: the other Member has no record yet) | form banner | "Algo ha fallado por el camino. ¿Probamos otra vez?" |
+| `not-the-invitee` (403: the Inviter tried to accept) | not reachable from the UI | — |
+| accept failed (network, `internal`, timeout) | Invitation inline alert (section 50) | "Tu sí no ha llegado a su destino. ¿Lo intentamos otra vez?" |
+| accept "not found" (`trip-not-found`, `invitation-not-found`) | Album status line (section 50) | "Esa invitación ya no existe. Puede que hayan cambiado de planes." |
+| Pending list failed | nothing shown (section 48 fails open) | — |
+
+## 53. Open decisions (ticket #62, for review in its PR)
+1. "Return from the background after a while" is set at 5 minutes hidden. Shorter feels naggy; longer may miss an Invitation sent while the app sat in a tab.
+2. The gate fails open after 6 seconds or an error: the app opens without the Invitation, and it shows on the next resume. Alternative: block with a retry card, at the cost of showing that something was being fetched.
+3. In a queue, the next Invitation enters 1.5 seconds after the Trip page appears. Alternatives: show all Invitations back to back and route to the last Trip, or wait for a tap on the Trip page.
+4. No "1 de 2" counter on queued Invitations, so each one feels like its own surprise.
+5. The question shrinks one step above 60 characters so 120 characters fit at 390x844 with the grown "Sí".
+6. The Invitation shows destination and dates under the question (the spec asks for them); Phase 1 showed only the question. They are small and secondary so the question still leads.
+7. The form uses a switch row with a `Gift` icon rather than a checkbox, and the question counter is always visible (unlike the other fields).
+8. The pre-filled question follows the Destino field until the Inviter edits it; with no destination yet it reads "¿Te vienes conmigo de viaje?".
+9. Hint copy "…este viaje será vuestro secreto… bueno, tuyo." is playful; a plainer option is "El viaje estará escondido hasta que diga que sí."
+10. `ui-ux-pro-max` searches for the disclosure toggle and the full-screen takeover returned no matching guideline; those choices follow the built-in defaults (visible labels, focus trap, visible focus) and this file's existing rules.
+11. Built differently from the sections above (builder, ticket #62): the gate wraps every route at the app level (around `Routes` and the `UploadBar`) rather than inside each `RequireMember`, so the queue survives the route change after "Sí"; it holds the boot screen only for a signed-in Member. The switch is a native `button role="switch"` styled with tokens, not the Radix one, to avoid a new dependency.
 
 ## Decisions (confirmed by the user, Phase 1)
 1. **Palette**: pink / coral / turquoise as defined above.

@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Heart, Waves } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { AlertCircle, CalendarHeart, Heart, MapPin, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { gsap, useGSAP } from "@/lib/gsap";
+import { formatDateRange } from "@/lib/dates";
 import { prefersReducedMotion } from "@/lib/utils";
 import {
   clampPoint,
   getBounds,
   pickPosition,
   readSafeInsets,
+  yesCap,
+  yesScale,
   type Box,
   type Point,
 } from "@/lib/dodge";
@@ -17,8 +20,22 @@ export interface Origin {
   y: number;
 }
 
-interface InvitationProps {
+/** The Invitation's background: the Phase 1 sunset gradient. Ticket #63 adds `{ kind: 'image', src }`. */
+export type InvitationBackdrop = { kind: "gradient" };
+
+export interface InvitationProps {
+  /** The Inviter's question, already trimmed (1-120 characters). Plain text. */
+  question: string;
+  destination: string;
+  startDate: string;
+  endDate: string;
+  backdrop: InvitationBackdrop;
+  /** The "Sí" transition is running: the text fades and "No" hides. */
   leaving: boolean;
+  /** "Sí" was pressed and its answer is pending: it ignores further presses. */
+  busy?: boolean;
+  /** Shown above the buttons, e.g. when the "Sí" did not arrive. */
+  alert?: string;
   onYes: (origin: Origin) => void;
 }
 
@@ -32,9 +49,11 @@ const DODGE_MESSAGES = [
 ];
 const TRIGGER_RADIUS = 90;
 const DEBOUNCE_MS = 150;
-const SCALE_STEP = 0.26;
-const MAX_SCALE = 2.6;
 const MARGIN = 16;
+/** "No" ignores triggers while the entrance plays. */
+const ENTRANCE_MS = 800;
+/** Above this many characters the question steps down one size (MASTER section 47). */
+const LONG_QUESTION = 60;
 
 function boxOf(r: DOMRect, pad = 0): Box {
   return {
@@ -45,8 +64,25 @@ function boxOf(r: DOMRect, pad = 0): Box {
   };
 }
 
-export function Invitation({ leaving, onYes }: InvitationProps) {
+/**
+ * One Invitation, full screen: the question, where and when, and the "Sí" / "No" that dodges
+ * (MASTER sections 6, 7 and 47). A modal dialog: focus stays on its two buttons and there is no
+ * way out but "Sí".
+ */
+export function Invitation({
+  question,
+  destination,
+  startDate,
+  endDate,
+  backdrop,
+  leaving,
+  busy = false,
+  alert,
+  onYes,
+}: InvitationProps) {
   const root = useRef<HTMLElement>(null);
+  const metaRef = useRef<HTMLParagraphElement>(null);
+  const readyAt = useRef(0);
   const rowRef = useRef<HTMLDivElement>(null);
   const yesRef = useRef<HTMLButtonElement>(null);
   const glowRef = useRef<HTMLSpanElement>(null);
@@ -78,16 +114,14 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
   const capScale = useCallback(() => {
     const yes = yesRef.current;
     if (!yes) return 1;
-    const maxW = Math.min(window.innerWidth * 0.86, 520);
-    const maxH = window.innerHeight * 0.28;
-    return Math.max(
-      1,
-      Math.min(MAX_SCALE, maxW / yes.offsetWidth, maxH / yes.offsetHeight),
+    return yesCap(
+      { w: yes.offsetWidth, h: yes.offsetHeight },
+      { w: window.innerWidth, h: window.innerHeight },
     );
   }, []);
 
   const scaleFor = useCallback(
-    (n: number) => Math.min(1 + SCALE_STEP * n, capScale()),
+    (n: number) => yesScale(n, capScale()),
     [capScale],
   );
 
@@ -123,6 +157,7 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
         const row = rowRef.current;
         if (!no || !yes || !row || leavingRef.current) return;
         const now = performance.now();
+        if (now < readyAt.current) return;
         if (!force && now - lastDodge.current < DEBOUNCE_MS) return;
         lastDodge.current = now;
 
@@ -152,9 +187,11 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
         const obstacles: Box[] = [{ x: cx - w / 2, y: cy - h / 2, w, h }];
         if (questionRef.current)
           obstacles.push(boxOf(questionRef.current.getBoundingClientRect(), 8));
+        if (metaRef.current)
+          obstacles.push(boxOf(metaRef.current.getBoundingClientRect(), 8));
 
         const size = { w: no.offsetWidth, h: no.offsetHeight };
-        const bounds = getBounds(size, MARGIN, readSafeInsets());
+        const bounds = getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight });
         const next = pickPosition({
           bounds,
           size,
@@ -226,7 +263,7 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
         const size = { w: no.offsetWidth, h: no.offsetHeight };
         pos.current = clampPoint(
           pos.current,
-          getBounds(size, MARGIN, readSafeInsets()),
+          getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight }),
         );
         gsap.set(no, { x: pos.current.x, y: pos.current.y });
       });
@@ -254,7 +291,7 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
     const target = pos.current;
     const clamped = clampPoint(
       target,
-      getBounds(size, MARGIN, readSafeInsets()),
+      getBounds(size, MARGIN, readSafeInsets(), { w: window.innerWidth, h: window.innerHeight }),
     );
     if (clamped.x === target.x && clamped.y === target.y) return;
     pos.current = clamped;
@@ -269,6 +306,32 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
         ease: "power2.out",
       });
   }, [dodges]);
+
+  // Entrance: the backdrop fades in, then the text and the buttons rise. None with reduced motion.
+  useGSAP(
+    () => {
+      if (prefersReducedMotion()) return;
+      readyAt.current = performance.now() + ENTRANCE_MS;
+      gsap
+        .timeline()
+        .from("[data-backdrop]", { opacity: 0, duration: 0.4 })
+        .from(
+          "[data-rise]",
+          {
+            opacity: 0,
+            y: 20,
+            duration: 0.5,
+            ease: "power2.out",
+            stagger: 0.1,
+            // A leftover transform on the button row would become the containing block of the
+            // fixed "No" and offset every dodge, so nothing stays behind.
+            clearProps: "transform,opacity",
+          },
+          0.2,
+        );
+    },
+    { scope: root },
+  );
 
   // Heartbeat glow behind "Sí" (off with reduced motion) and the press beat.
   useGSAP(
@@ -310,10 +373,30 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
   );
 
   const handleYes = () => {
+    if (busy) return;
     const r = yesRef.current?.getBoundingClientRect();
     if (!r) return;
     onYes({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
   };
+
+  // A modal with two buttons: Tab moves between them and never leaves; Escape does nothing.
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    const next =
+      document.activeElement === yesRef.current ? noRef.current : yesRef.current;
+    next?.focus({ preventScroll: true });
+  };
+
+  // Line breaks collapse to spaces; Array.from counts an emoji as one character.
+  const text = question.replace(/\s+/g, " ").trim();
+  const long = Array.from(text).length > LONG_QUESTION;
+  const questionId = useId();
+  const metaId = useId();
 
   const label =
     dodges === 0 ? "No" : DODGE_MESSAGES[(dodges - 1) % DODGE_MESSAGES.length];
@@ -322,30 +405,64 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
   return (
     <section
       ref={root}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={questionId}
+      aria-describedby={metaId}
+      onKeyDown={onKeyDown}
       className="relative flex h-dvh flex-col items-center justify-center overflow-hidden px-5 text-center"
       style={{
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
     >
+      <InvitationBackdropLayer backdrop={backdrop} />
       <Decor />
 
       <div
         className={`relative z-10 flex w-full max-w-2xl flex-col items-center gap-5 transition-opacity duration-200 ${leaving ? "opacity-0" : "opacity-100"}`}
       >
-        <p className="font-script text-3xl text-primary" aria-hidden="true">
+        <p data-rise className="font-script text-3xl text-primary" aria-hidden="true">
           para ti
         </p>
         <h1
           ref={questionRef}
-          className="font-serif text-[clamp(2rem,8vw,3.5rem)] font-bold leading-[1.1] text-balance"
+          id={questionId}
+          data-rise
+          className={`max-w-[18ch] font-serif font-bold text-balance [overflow-wrap:anywhere] ${long ? "text-[clamp(1.75rem,6.5vw,2.75rem)] leading-[1.15]" : "text-[clamp(2rem,8vw,3.5rem)] leading-[1.1]"}`}
         >
-          ¿Quieres venirte conmigo de viaje?
+          {text}
         </h1>
+        <p
+          ref={metaRef}
+          id={metaId}
+          data-rise
+          className="-mt-1 flex max-w-full flex-col items-center gap-1 text-base font-semibold text-secondary-foreground"
+        >
+          <span className="flex max-w-full items-center gap-1.5">
+            <MapPin aria-hidden="true" className="size-[18px] shrink-0 text-ocean" />
+            <span className="truncate">{destination}</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <CalendarHeart aria-hidden="true" className="size-[18px] shrink-0 text-ocean" />
+            {formatDateRange(startDate, endDate)}
+          </span>
+        </p>
       </div>
+
+      {alert && (
+        <p
+          role="alert"
+          className="relative z-20 mt-5 flex max-w-md items-center gap-2 rounded-full bg-card/90 px-4 py-2 text-[15px] text-secondary-foreground"
+        >
+          <AlertCircle aria-hidden="true" className="size-4 shrink-0" />
+          {alert}
+        </p>
+      )}
 
       <div
         ref={rowRef}
+        data-rise
         style={reserve ? { minHeight: reserve } : undefined}
         className="relative z-20 mt-6 flex w-full max-w-md items-center justify-center gap-3"
       >
@@ -353,6 +470,7 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
           ref={yesRef}
           variant="yes"
           onClick={handleYes}
+          aria-disabled={busy || undefined}
           style={{
             transformOrigin: "50% 50%",
             boxShadow: `0 10px ${30 + glow * 30}px -8px rgb(190 24 93 / ${0.25 + glow * 0.3})`,
@@ -394,6 +512,29 @@ export function Invitation({ leaving, onYes }: InvitationProps) {
         {dodges > 0 ? label : ""}
       </p>
     </section>
+  );
+}
+
+/** The layer behind everything; opaque, so nothing of the screen underneath shows through. */
+function InvitationBackdropLayer({ backdrop }: { backdrop: InvitationBackdrop }) {
+  // Only the gradient exists for now (MASTER section 47); #63 adds the image kind and its scrim.
+  void backdrop;
+  return (
+    <div
+      data-backdrop
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+      // Soft colour pools as radial gradients over the sunset gradient: no blur filter, so no
+      // tone edge where a filtered layer ends.
+      style={{
+        backgroundImage: [
+          "radial-gradient(circle at 4% 4%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 22rem)",
+          "radial-gradient(circle at 100% 38%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 20rem)",
+          "radial-gradient(circle at 40% 100%, color-mix(in srgb, var(--ocean) 10%, transparent), transparent 22rem)",
+          "var(--gradient-sunset)",
+        ].join(", "),
+      }}
+    />
   );
 }
 

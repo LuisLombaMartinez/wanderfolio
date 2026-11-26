@@ -5,9 +5,10 @@
 //	Member: pk = MEMBER#<id>, sk = PROFILE
 //	Trip:   pk = TRIP#<id>,   sk = TRIP, gsi1pk = ALBUM, gsi1sk = <startDate>#<id>
 //	Photo:  pk = TRIP#<tripId>, sk = PHOTO#<photoId>   (see photos.go)
+//	Invitation: pk = TRIP#<tripId>, sk = INVITATION, gsi1pk = PENDING#<inviteeId> while Pending (see invitations.go)
 //
-// The album index (gsi1) lists Trips by start date; later specs add their own
-// gsi1pk partitions (for example Pending Invitations by Invitee) to the same index.
+// The generic index (gsi1) holds one partition per access pattern: ALBUM lists Trips by
+// start date, PENDING#<inviteeId> lists Pending Invitations oldest first.
 package store
 
 import (
@@ -49,7 +50,14 @@ type Trip struct {
 	// CoverPhotoID is the Photo the Members chose as the Cover photo; empty when none was
 	// chosen. It may name a Photo that no longer exists or is not ready: readers fall back.
 	CoverPhotoID string
+	// HiddenFrom is the Invitee of the Trip's Pending Invitation: the Trip is hidden from that
+	// Member until they accept. Empty when the Trip has no Pending Invitation.
+	HiddenFrom string
 }
+
+// VisibleTo reports whether the Member can see the Trip: every Trip except one whose
+// Pending Invitation is for that Member.
+func (t Trip) VisibleTo(memberID string) bool { return t.HiddenFrom != memberID }
 
 // Store reads and writes the Album table.
 type Store struct {
@@ -86,6 +94,16 @@ type tripItem struct {
 	EndDate      string `dynamodbav:"endDate"`
 	Description  string `dynamodbav:"description,omitempty"`
 	CoverPhotoID string `dynamodbav:"coverPhotoId,omitempty"`
+	HiddenFrom   string `dynamodbav:"hiddenFrom,omitempty"`
+}
+
+func newTripItem(t Trip) tripItem {
+	return tripItem{
+		PK: "TRIP#" + t.ID, SK: "TRIP", GSI1PK: albumPartition, GSI1SK: t.StartDate + "#" + t.ID,
+		ID: t.ID, Title: t.Title, Destination: t.Destination,
+		StartDate: t.StartDate, EndDate: t.EndDate, Description: t.Description,
+		HiddenFrom: t.HiddenFrom,
+	}
 }
 
 func memberKey(id string) map[string]types.AttributeValue {
@@ -182,7 +200,7 @@ func tripFromItem(it tripItem) Trip {
 	return Trip{
 		ID: it.ID, Title: it.Title, Destination: it.Destination,
 		StartDate: it.StartDate, EndDate: it.EndDate, Description: it.Description,
-		CoverPhotoID: it.CoverPhotoID,
+		CoverPhotoID: it.CoverPhotoID, HiddenFrom: it.HiddenFrom,
 	}
 }
 
@@ -192,12 +210,8 @@ func (s *Store) CreateTrip(ctx context.Context, t Trip) (Trip, error) {
 	if err != nil {
 		return Trip{}, err
 	}
-	t.ID = id
-	item, err := attributevalue.MarshalMap(tripItem{
-		PK: "TRIP#" + id, SK: "TRIP", GSI1PK: albumPartition, GSI1SK: t.StartDate + "#" + id,
-		ID: id, Title: t.Title, Destination: t.Destination,
-		StartDate: t.StartDate, EndDate: t.EndDate, Description: t.Description,
-	})
+	t.ID, t.HiddenFrom = id, ""
+	item, err := attributevalue.MarshalMap(newTripItem(t))
 	if err != nil {
 		return Trip{}, fmt.Errorf("marshal trip: %w", err)
 	}
@@ -270,16 +284,27 @@ func (s *Store) UpdateTrip(ctx context.Context, t Trip) (Trip, error) {
 	return tripFromItem(it), nil
 }
 
-// DeleteTrip removes a Trip, or returns ErrNotFound.
+// DeleteTrip removes a Trip together with its Invitation, if it has one, in one transaction
+// (so a failure never leaves a Trip hidden by an Invitation that is gone), or returns
+// ErrNotFound when the Trip does not exist.
 func (s *Store) DeleteTrip(ctx context.Context, id string) error {
-	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-		TableName:           aws.String(s.table),
-		Key:                 tripKey(id),
-		ConditionExpression: aws.String("attribute_exists(pk)"),
+	_, err := s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []types.TransactWriteItem{
+			{Delete: &types.Delete{
+				TableName:           aws.String(s.table),
+				Key:                 tripKey(id),
+				ConditionExpression: aws.String("attribute_exists(pk)"),
+			}},
+			{Delete: &types.Delete{TableName: aws.String(s.table), Key: invitationKey(id)}},
+		},
 	})
-	var cond *types.ConditionalCheckFailedException
-	if errors.As(err, &cond) {
-		return ErrNotFound
+	var cancelled *types.TransactionCanceledException
+	if errors.As(err, &cancelled) {
+		for _, r := range cancelled.CancellationReasons {
+			if aws.ToString(r.Code) == "ConditionalCheckFailed" {
+				return ErrNotFound
+			}
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("delete trip: %w", err)

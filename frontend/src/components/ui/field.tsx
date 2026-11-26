@@ -82,14 +82,16 @@ export function FieldError({ id, error }: { id?: string; error?: string }) {
 
 type TextareaFieldProps = Omit<ComponentProps<'textarea'>, 'id'> & {
   label: string
+  hint?: string
   error?: string
   footer?: ReactNode
 }
 
 /** A labelled textarea that grows with its content, up to 12 rows. */
-export function TextareaField({ label, error, footer, className, value, ...props }: TextareaFieldProps) {
+export function TextareaField({ label, hint, error, footer, className, value, ...props }: TextareaFieldProps) {
   const id = useId()
   const errorId = `${id}-error`
+  const hintId = `${id}-hint`
   const area = useRef<HTMLTextAreaElement>(null)
 
   useLayoutEffect(() => {
@@ -110,13 +112,18 @@ export function TextareaField({ label, error, footer, className, value, ...props
         rows={4}
         value={value}
         aria-invalid={!!error || undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={[hint ? hintId : '', error ? errorId : ''].filter(Boolean).join(' ') || undefined}
         className={cn(
           'max-h-[calc(12*1.5rem+1.5rem)] w-full resize-none rounded-2xl border bg-card px-4 py-3 text-base leading-6 text-foreground shadow-field placeholder:text-muted-foreground/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
           error ? 'border-primary' : 'border-border',
         )}
         {...props}
       />
+      {hint && (
+        <p id={hintId} className="text-sm text-muted-foreground">
+          {hint}
+        </p>
+      )}
       <FieldError id={errorId} error={error} />
       {footer}
     </div>

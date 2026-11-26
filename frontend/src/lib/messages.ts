@@ -148,3 +148,11 @@ export const COVER_NOTICE = '¡Nueva portada! Así nos verá el álbum.'
 export function coverErrorMessage(err: unknown): string {
   return err instanceof ApiError && err.code === 'photo-not-ready' ? COVER_NOT_READY : COVER_ERROR
 }
+
+/** Spanish copy for Invitations (design/MASTER.md section 52). */
+export const INVITATION_MESSAGES: Record<string, string> = {
+  'question-required': 'Escribe la pregunta que quieres hacerle.',
+  'question-too-long': 'Que quepa en un suspiro: máximo 120 caracteres.',
+}
+export const ACCEPT_FAILED = 'Tu sí no ha llegado a su destino. ¿Lo intentamos otra vez?'
+export const INVITATION_GONE = 'Esa invitación ya no existe. Puede que hayan cambiado de planes.'

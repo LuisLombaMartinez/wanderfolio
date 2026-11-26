@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getCurrentMember, getTrip, listTrips, retryPhoto, setCoverPhoto } from '@/lib/api'
+import { ApiError, acceptInvitation, getCurrentMember, getTrip, listPendingInvitations, listTrips, retryPhoto, setCoverPhoto } from '@/lib/api'
 
 vi.mock('@/lib/auth', () => ({ accessToken: () => Promise.resolve('t') }))
 
@@ -78,5 +78,40 @@ describe('retryPhoto', () => {
     await expect(retryPhoto('t', 'p')).rejects.toMatchObject({ status: 409, code: 'photo-not-failed' })
     reply({ id: 'p1' })
     await expect(retryPhoto('t', 'p')).rejects.toMatchObject({ code: 'bad-response' })
+  })
+})
+
+describe('Invitations', () => {
+  const invitation = {
+    tripId: 't1', question: '¿Vienes?', inviterId: 'a', inviteeId: 'b',
+    status: 'pending', createdAt: '2026-11-26T10:00:00.000Z', acceptedAt: null,
+  }
+
+  it('lists Pending Invitations in the order the API gives', async () => {
+    const second = { ...invitation, tripId: 't2', destination: 'Roma', startDate: '2027-01-01', endDate: '2027-01-02' }
+    const first = { ...invitation, destination: 'París', startDate: '2027-03-01', endDate: '2027-03-02' }
+    const spy = reply({ invitations: [first, second] })
+    await expect(listPendingInvitations()).resolves.toEqual([first, second])
+    expect(spy.mock.calls[0][0]).toBe('/api/invitations/pending')
+    reply({ invitations: [{ ...first, destination: undefined }] })
+    await expect(listPendingInvitations()).rejects.toMatchObject({ code: 'bad-response' })
+  })
+
+  it('accepts with a POST and reads the accepted Invitation back', async () => {
+    const spy = reply({ ...invitation, status: 'accepted', acceptedAt: '2026-11-26T11:00:00.000Z' })
+    await expect(acceptInvitation('t 1')).resolves.toMatchObject({ status: 'accepted' })
+    expect(spy.mock.calls[0][0]).toBe('/api/trips/t%201/invitation/accept')
+    expect(spy.mock.calls[0][1]).toMatchObject({ method: 'POST' })
+    reply({ error: { code: 'invitation-not-found', message: 'x' } }, 404)
+    await expect(acceptInvitation('t')).rejects.toMatchObject({ status: 404, code: 'invitation-not-found' })
+  })
+
+  it('reads a Trip with or without its Invitation and refuses a malformed one', async () => {
+    reply({ ...trip, invitation })
+    await expect(getTrip('x')).resolves.toMatchObject({ invitation })
+    reply({ ...trip, invitation: null })
+    await expect(getTrip('x')).resolves.toMatchObject({ invitation: null })
+    reply({ ...trip, invitation: { ...invitation, status: 'maybe' } })
+    await expect(getTrip('x')).rejects.toMatchObject({ code: 'bad-response' })
   })
 })

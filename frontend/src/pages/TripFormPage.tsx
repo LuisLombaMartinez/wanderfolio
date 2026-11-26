@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { AlertCircle, Heart, Hourglass, MapPin } from 'lucide-react'
+import { AlertCircle, Gift, Heart, Hourglass, MapPin } from 'lucide-react'
 import { useAuth } from '@/auth/auth-context'
 import { TripShell } from '@/components/TripShell'
 import { TripLoadErrorCard, TripNotFoundCard } from '@/components/TripStateCards'
 import { Button } from '@/components/ui/button'
 import { Field, TextareaField } from '@/components/ui/field'
+import { Switch } from '@/components/ui/switch'
 import { ApiError, createTrip, getTrip, updateTrip } from '@/lib/api'
 import { isRealDate, tripLength, tripLengthLabel } from '@/lib/dates'
 import { gsap, useGSAP } from '@/lib/gsap'
-import { tripErrorMessage } from '@/lib/messages'
+import { INVITATION_MESSAGES, tripErrorMessage } from '@/lib/messages'
+import { QUESTION_LIMIT, questionFollows, suggestedQuestion, validateQuestion } from '@/lib/invitation'
+import { prefersReducedMotion } from '@/lib/utils'
 import { LIMITS, fieldForCode, validateTrip, type TripErrors, type TripField, type TripValues } from '@/lib/trip-form'
 import { useAfter } from '@/lib/useAfter'
 
@@ -111,6 +114,14 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
   const [serverErrors, setServerErrors] = useState<TripErrors>({})
   const [banner, setBanner] = useState<{ text: string; gone?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  // The Invitation (create only). The question follows the destination until it is edited (null).
+  const [inviting, setInviting] = useState(false)
+  const [customQuestion, setCustomQuestion] = useState<string | null>(null)
+  const [questionServerError, setQuestionServerError] = useState<string>()
+  const creating = tripId === undefined
+  const question = customQuestion ?? suggestedQuestion(values.destination)
+  const questionError =
+    creating && inviting ? (submitted ? validateQuestion(question) : undefined) ?? questionServerError : undefined
 
   // After the first submit, every change is checked live; the API's own errors stick until the field changes.
   const clientErrors = submitted ? validateTrip(values) : {}
@@ -126,8 +137,8 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
     setServerErrors((e) => ({ ...e, [field]: undefined }))
   }
 
-  function focusFirst(errs: TripErrors) {
-    const first = FIELD_ORDER.find((f) => errs[f])
+  function focusFirst(errs: TripErrors, questionInvalid = false) {
+    const first = FIELD_ORDER.find((f) => errs[f]) ?? (questionInvalid ? 'question' : undefined)
     if (first) form.current?.querySelector<HTMLElement>(`[name="${first}"]`)?.focus()
   }
 
@@ -137,7 +148,8 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
     setSubmitted(true)
     setBanner(null)
     const found = validateTrip(values)
-    if (Object.keys(found).length > 0) return focusFirst(found)
+    const questionInvalid = creating && inviting && validateQuestion(question) !== undefined
+    if (Object.keys(found).length > 0 || questionInvalid) return focusFirst(found, questionInvalid)
     setBusy(true)
     const input = {
       title: values.title.trim(),
@@ -147,14 +159,19 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
       description: values.description.trim(),
     }
     try {
-      const saved = tripId ? await updateTrip(tripId, input) : await createTrip(input)
+      const saved = tripId
+        ? await updateTrip(tripId, input)
+        : await createTrip(inviting ? { ...input, invitation: { question: question.replace(/\s+/g, ' ').trim() } } : input)
       navigate(`/trips/${saved.id}`, { replace: true })
     } catch (err) {
       if (handleApiError(err)) return
       setBusy(false)
       const code = err instanceof ApiError ? err.code : ''
       const field = fieldForCode(code)
-      if (field) {
+      if (INVITATION_MESSAGES[code] && inviting) {
+        setQuestionServerError(INVITATION_MESSAGES[code])
+        focusFirst({}, true)
+      } else if (field) {
         const errs = { [field]: tripErrorMessage(err) }
         setServerErrors(errs)
         focusFirst(errs)
@@ -278,6 +295,20 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
         footer={counter('description', 1800)}
       />
 
+      {creating && (
+        <InvitationOption
+          on={inviting}
+          onToggle={setInviting}
+          question={question}
+          onQuestion={(q) => {
+            setCustomQuestion(questionFollows(q, values.destination) ? null : q)
+            setQuestionServerError(undefined)
+          }}
+          error={questionError}
+          busy={busy}
+        />
+      )}
+
       <div className="mt-2 flex flex-col gap-3 sm:flex-row-reverse sm:justify-start">
         <Button type="submit" disabled={busy}>
           <Heart aria-hidden="true" className={busy ? 'heart-pulse size-5 fill-current' : 'size-5'} />
@@ -288,6 +319,88 @@ function TripForm({ tripId, initial, cancelTo }: { tripId?: string; initial: Tri
         </Button>
       </div>
     </form>
+  )
+}
+
+/** "Añadir invitación": the switch row and, when on, the question (MASTER section 51). */
+function InvitationOption({
+  on,
+  onToggle,
+  question,
+  onQuestion,
+  error,
+  busy,
+}: {
+  on: boolean
+  onToggle: (on: boolean) => void
+  question: string
+  onQuestion: (q: string) => void
+  error?: string
+  busy: boolean
+}) {
+  const panel = useRef<HTMLDivElement>(null)
+  const n = Array.from(question).length
+
+  useGSAP(
+    () => {
+      if (!on || prefersReducedMotion()) return
+      gsap.from(panel.current, { opacity: 0, y: 8, duration: 0.2, ease: 'power2.out' })
+    },
+    { dependencies: [on] },
+  )
+
+  return (
+    <div className="-mx-5 border-t border-border px-5 pt-6 sm:-mx-8 sm:px-8">
+      <div
+        className="flex min-h-14 cursor-pointer items-center gap-3"
+        onClick={(e) => {
+          // The whole row toggles; the switch handles its own click.
+          if (!(e.target instanceof Element && e.target.closest('[role="switch"]')) && !busy) onToggle(!on)
+        }}
+      >
+        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-secondary">
+          <Gift className="size-5 text-primary" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span id="invitation-toggle-label" className="block text-[17px] font-bold text-foreground">
+            Añadir invitación
+          </span>
+          <span id="invitation-toggle-hint" className="block text-sm text-muted-foreground">
+            Que el viaje sea una sorpresa hasta que diga que sí.
+          </span>
+        </span>
+        <Switch
+          checked={on}
+          onCheckedChange={onToggle}
+          disabled={busy}
+          aria-labelledby="invitation-toggle-label"
+          aria-describedby="invitation-toggle-hint"
+        />
+      </div>
+      {on && (
+        <div ref={panel} className="mt-5 pb-1">
+          <TextareaField
+            label="La pregunta"
+            name="question"
+            rows={2}
+            value={question}
+            onChange={(e) => onQuestion(e.target.value)}
+            readOnly={busy}
+            error={error ?? (n > QUESTION_LIMIT ? INVITATION_MESSAGES['question-too-long'] : undefined)}
+            hint="La verá en cuanto abra el álbum. Hasta que diga que sí, este viaje será vuestro secreto… bueno, tuyo."
+            className="[&_textarea]:max-h-[calc(4*1.5rem+1.5rem)]"
+            footer={
+              <p
+                aria-live={n >= 100 ? 'polite' : undefined}
+                className={`text-right text-sm ${n >= 100 ? 'text-secondary-foreground' : 'text-muted-foreground'}`}
+              >
+                {n}/{QUESTION_LIMIT}
+              </p>
+            }
+          />
+        </div>
+      )}
+    </div>
   )
 }
 

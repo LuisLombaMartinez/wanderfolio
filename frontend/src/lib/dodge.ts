@@ -30,9 +30,10 @@ export function getBounds(
   size: Size,
   margin: number,
   insets: { top: number; right: number; bottom: number; left: number },
+  viewport: Size,
 ): Bounds {
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+  const vw = viewport.w
+  const vh = viewport.h
   const minX = margin + insets.left
   const minY = margin + insets.top
   return {
@@ -140,4 +141,24 @@ export function readSafeInsets() {
   }
   probe.remove()
   return insets
+}
+
+/** How much "Sí" grows on each dodge, and the most it ever grows (MASTER section 47). */
+export const YES_SCALE_STEP = 0.26
+export const YES_MAX_SCALE = 2.6
+
+/**
+ * Largest scale "Sí" may reach without breaking the layout: at most 2.6, at most 86% of the
+ * viewport width (and 520px), at most 28% of its height, and never below 1.
+ */
+export function yesCap(yes: Size, viewport: Size): number {
+  if (yes.w <= 0 || yes.h <= 0) return 1
+  const maxW = Math.min(viewport.w * 0.86, 520)
+  const maxH = viewport.h * 0.28
+  return Math.max(1, Math.min(YES_MAX_SCALE, maxW / yes.w, maxH / yes.h))
+}
+
+/** The scale of "Sí" after `dodges` dodges, under `cap` (see yesCap). */
+export function yesScale(dodges: number, cap: number): number {
+  return Math.min(1 + YES_SCALE_STEP * dodges, cap)
 }

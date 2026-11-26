@@ -9,7 +9,12 @@ import { NEW_PASSWORD, TEMPORARY_PASSWORD, memberFor, resetToTemporaryPassword }
  * login screen first and, if the Album does not appear, resets the Member and goes through once more.
  */
 export async function signIn(page: Page, project: string) {
-  const member = memberFor(project)
+  await signInAs(page, memberFor(project).email)
+}
+
+/** signIn for a given test Member, e.g. the other Member in a two-context journey. */
+export async function signInAs(page: Page, email: string) {
+  const member = { email }
   const album = page.getByRole('heading', { level: 1, name: 'Nuestro álbum' })
   for (let attempt = 1; ; attempt++) {
     try {
