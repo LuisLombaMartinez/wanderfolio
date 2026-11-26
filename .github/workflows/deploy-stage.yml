@@ -76,7 +76,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: infra/package-lock.json
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5 (bundles the Go Lambda during synth)
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v5 (bundles the Go Lambda during synth)
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
