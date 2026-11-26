@@ -1,0 +1,125 @@
+@import 'tailwindcss';
+@import '@fontsource/great-vibes/400.css';
+@import '@fontsource/cormorant-infant/600.css';
+@import '@fontsource/cormorant-infant/700.css';
+@import '@fontsource/nunito/400.css';
+@import '@fontsource/nunito/600.css';
+@import '@fontsource/nunito/700.css';
+
+:root {
+  /* AppHeader: its content row plus the 1px border; screens that fill the viewport subtract it. */
+  --app-header-content: 4rem;
+  --app-header-height: calc(var(--app-header-content) + 1px);
+  --background: #fff5f7;
+  --foreground: #2a1220;
+  --card: #ffffff;
+  --card-foreground: #2a1220;
+  --primary: #be185d;
+  --primary-foreground: #ffffff;
+  --secondary: #ffe1e9;
+  --secondary-foreground: #7a0f3d;
+  --accent: #ff8a65;
+  --ocean: #0e9aa7;
+  --muted: #fbeaf0;
+  --muted-foreground: #6b4a5c;
+  --border: #f3cfdb;
+  --ring: #be185d;
+  --no-bg: #ffffff;
+  --no-fg: #6b4a5c;
+  --cover-rosa: linear-gradient(150deg, var(--secondary) 0%, color-mix(in srgb, var(--accent) 55%, var(--secondary)) 100%);
+  --cover-atardecer: linear-gradient(160deg, var(--muted) 0%, #ffd9c7 50%, color-mix(in srgb, var(--accent) 40%, #ffd9c7) 100%);
+  --cover-mar: linear-gradient(140deg, var(--secondary) 0%, color-mix(in srgb, var(--ocean) 30%, var(--secondary)) 100%);
+  --gradient-sunset: linear-gradient(160deg, #fff5f7 0%, #ffe1e9 45%, #ffd9c7 100%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-ocean: var(--ocean);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-no-bg: var(--no-bg);
+  --color-no-fg: var(--no-fg);
+  --font-script: 'Great Vibes', cursive;
+  --font-serif: 'Cormorant Infant', serif;
+  --font-sans: 'Nunito', sans-serif;
+  --shadow-pink: 0 10px 30px -10px color-mix(in srgb, var(--primary) 25%, transparent);
+  --shadow-pink-lift: 0 18px 40px -12px color-mix(in srgb, var(--primary) 35%, transparent);
+  --shadow-field: inset 0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+  --radius-photo: 24px;
+  --radius-frame: 28px;
+}
+
+@layer base {
+  html {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-size: 1rem;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+  button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.dialog-content { animation: dialog-in 0.2s ease-out; }
+.dialog-overlay { animation: overlay-in 0.2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .dialog-content, .dialog-overlay { animation: none; }
+}
+
+@keyframes shimmer { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes heart-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+.shimmer { animation: shimmer 1.6s ease-in-out infinite; }
+.heart-pulse { animation: heart-pulse 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .shimmer, .heart-pulse { animation: none; }
+}
+
+@keyframes field-error-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.field-error { animation: field-error-in 0.15s ease-out; }
+@media (prefers-reduced-motion: reduce) { .field-error { animation: none; } }
+
+/* Revealing tiles: a soft diagonal light sweep (CSS: there can be dozens at once). */
+@keyframes reveal-sweep { from { transform: translateX(-120%) skewX(-18deg); } to { transform: translateX(260%) skewX(-18deg); } }
+/* No `position` here: unlayered CSS beats Tailwind's layered utilities, and the tile positions it with `absolute inset-0`. */
+.reveal-sweep { overflow: hidden; }
+.reveal-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.3), transparent);
+  pointer-events: none;
+  animation: reveal-sweep 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .reveal-sweep::after { display: none; } }

@@ -1,0 +1,5 @@
+# Runtime dependencies bundled into the Lambda zip (boto3 comes with the Lambda runtime).
+# Bundle with: pip install -r requirements.txt -t <out> --only-binary=:all: \
+#   --platform manylinux_2_28_aarch64 --implementation cp --python-version 3.13
+pillow==13.0.0
+pillow-heif==1.8.1  # HEIC/HEIF; the aarch64 wheel bundles libheif, no system libs

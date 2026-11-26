@@ -1,0 +1,30 @@
+{
+  "name": "viajecito-infra",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "synth": "cdk synth --quiet",
+    "local:up": "bash scripts/local-up.sh",
+    "local:down": "bash scripts/local-down.sh"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.277.0",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-cloudformation": "^3.1169.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1169.0",
+    "@aws-sdk/client-lambda": "^3.1169.0",
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/client-ssm": "^3.1169.0",
+    "@types/node": "^26.6.6",
+    "aws-amplify": "^6.22.2",
+    "aws-cdk": "^2.1148.1",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

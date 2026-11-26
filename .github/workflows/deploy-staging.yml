@@ -1,0 +1,55 @@
+name: Deploy to staging
+
+# Runs only after CI has passed on a push to main, and deploys exactly the commit CI tested to the
+# throwaway staging stack (ViajecitoStg). Prod is a separate, manual workflow (deploy-prod.yml) that
+# deploys the commit this one last deployed successfully. See ADR-0006.
+#
+# The run name carries the commit SHA: deploy-prod.yml reads it back from here, because a workflow_run
+# run's own head_sha is the tip of main when it started, which is not always the commit CI tested.
+#
+# The jobs have no `environment:`: that would change the OIDC subject the deploy role trusts (see the
+# comment in deploy-stage.yml).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+run-name: Deploy to staging ${{ github.event.workflow_run.head_sha }}
+
+permissions:
+  contents: read
+
+# One staging deploy at a time; a newer one waits for the running one instead of cancelling it midway.
+concurrency:
+  group: deploy-stg
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Staging
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    uses: ./.github/workflows/deploy-stage.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      stage: stg
+      sha: ${{ github.event.workflow_run.head_sha }}
+
+  # deploy-prod.yml looks for this job when it picks the commit to promote: it only succeeds when the
+  # whole staging deploy (stack, build and upload) did.
+  deployed:
+    name: Staging deployed
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          URL: ${{ needs.deploy.outputs.site_url }}
+        run: |
+          {
+            echo "### Staging is running \`${SHA}\`"
+            echo
+            echo "Check it at ${URL}, then run the \"Deploy to prod\" workflow to promote exactly this commit."
+          } >> "$GITHUB_STEP_SUMMARY"

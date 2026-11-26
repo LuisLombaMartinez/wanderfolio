@@ -1,0 +1,30 @@
+# Local AWS stand-in (Floci, ADR-0005). Started by infra/scripts/local-up.sh.
+# The host port must equal FLOCI_PORT: Floci embeds its own port in the URLs it hands out.
+# FLOCI_BASE_URL must use a literal IP: the HTTP API JWT authorizer only fetches
+# plain-HTTP issuers that are literal private IPs.
+name: ${FLOCI_NAMESPACE:-viajecito}
+
+services:
+  floci:
+    image: floci/floci:2.5.0
+    ports:
+      - "127.0.0.1:${FLOCI_PORT:-4600}:${FLOCI_PORT:-4600}" # loopback only: Floci accepts any credentials
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Lambdas run as sibling containers
+    environment:
+      FLOCI_PORT: "${FLOCI_PORT:-4600}"
+      FLOCI_BASE_URL: "http://127.0.0.1:${FLOCI_PORT:-4600}"
+      FLOCI_DEFAULT_REGION: eu-west-1
+      FLOCI_SECURITY_ALLOW_PRIVATE_JWT_TARGETS: "true"
+      FLOCI_SERVICES_LAMBDA_HONOUR_ARCHITECTURES: "true" # run arm64 Lambdas as arm64 (needs QEMU binfmt)
+      FLOCI_SERVICES_LAMBDA_INIT_TIMEOUT_SECONDS: "60"
+      FLOCI_SERVICES_LAMBDA_WARM_POOL_MAX_TOTAL: "6"
+      FLOCI_SECURITY_EXTRA_CORS_ALLOWED_ORIGINS: "${SPA_ORIGIN:-http://localhost:5173}" # browser -> Cognito
+      FLOCI_DOCKER_RESOURCE_NAMESPACE: "${FLOCI_NAMESPACE:-viajecito}"
+      FLOCI_SERVICES_UI_ENABLED: "false"
+      FLOCI_STORAGE_MODE: memory
+      # Floci's ECR backing registry binds a loopback port from this range (default 5100-5199).
+      # Pinned per instance so two local stacks on one machine cannot clash.
+      # ECR_PORT_BASE/MAX are the canonical names; FLOCI_ECR_BASE_PORT/MAX_PORT still work (ticket 9 scripts).
+      FLOCI_SERVICES_ECR_REGISTRY_BASE_PORT: "${ECR_PORT_BASE:-${FLOCI_ECR_BASE_PORT:-5100}}"
+      FLOCI_SERVICES_ECR_REGISTRY_MAX_PORT: "${ECR_PORT_MAX:-${FLOCI_ECR_MAX_PORT:-5199}}"

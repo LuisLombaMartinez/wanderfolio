@@ -1,0 +1,324 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLOCI_PORT: "4600"
+  FLOCI_NAMESPACE: viajecito-ci
+  SPA_PORT: "5173"
+
+jobs:
+  # Pull requests run only the jobs for the areas they touch; skipped jobs report "skipped", which a
+  # required check treats as passing. Pushes to main always run everything, so the staging deploy
+  # (deploy-staging.yml) only ever starts from a fully tested commit. The ruleset requires one check,
+  # "CI passed", at the end of this file.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.areas.outputs.frontend }}
+      go: ${{ steps.areas.outputs.go }}
+      processing: ${{ steps.areas.outputs.processing }}
+      cdk: ${{ steps.areas.outputs.cdk }}
+      e2e: ${{ steps.areas.outputs.e2e }}
+    steps:
+      # A pull_request run checks out the PR's merge commit: its first parent is the base branch, so
+      # depth 2 is enough to diff the PR against the base it would merge into.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Classify the changed files
+        id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          all=false frontend=false go=false processing=false
+          if [ "$EVENT" != "pull_request" ]; then
+            all=true
+          else
+            # Fail loudly rather than open: with no base commit or a broken diff every area would stay
+            # false and "CI passed" would go green on lint alone.
+            git rev-parse --verify --quiet HEAD^1 >/dev/null || { echo "::error::No base commit (HEAD^1) to diff against"; exit 1; }
+            # Capture the list first so a failing git diff stops the step (a failure inside a process
+            # substitution would not). --no-renames lists both the old and the new path of a move.
+            files="$(git diff --name-only --no-renames HEAD^1 HEAD)"
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              case "$f" in
+                # Docs and factory files: lint only. The setup wizard is run by hand, never by CI, so
+                # its only check is shellcheck in the lint job.
+                *.md | docs/* | design/* | specs/* | reports/* | .claude/* | skills-lock.json | infra/scripts/setup-wizard.sh) ;;
+                # Run everything: workflows, lockfiles and infra. The Go, Python and e2e jobs all run
+                # against Floci (infra/local) or the CDK app, so an infra change can break any of them.
+                .github/* | infra/* | */package-lock.json | backend/go.mod | backend/go.sum | backend/processing/requirements*.txt) all=true ;;
+                frontend/*) frontend=true ;;
+                backend/processing/*) processing=true ;;
+                backend/*) go=true ;;
+                # Anything not listed above (a new top-level file or folder): play safe.
+                *) all=true ;;
+              esac
+            done <<< "$files"
+          fi
+          if [ "$all" = true ]; then frontend=true go=true processing=true; fi
+          # cdk synth bundles the Go and Python Lambdas from backend/, so those changes need it too.
+          cdk=false e2e=false
+          if [ "$all" = true ] || [ "$go" = true ] || [ "$processing" = true ]; then cdk=true; fi
+          if [ "$cdk" = true ] || [ "$frontend" = true ]; then e2e=true; fi
+          {
+            echo "frontend=$frontend"
+            echo "go=$go"
+            echo "processing=$processing"
+            echo "cdk=$cdk"
+            echo "e2e=$e2e"
+          } | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "### Areas this run tests"
+            echo "| frontend | go | processing | cdk | e2e | lint |"
+            echo "|---|---|---|---|---|---|"
+            echo "| $frontend | $go | $processing | $cdk | $e2e | true |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Frontend build, lint and tests
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Known-vulnerability audit of the production dependencies; fails on high or critical.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  backend:
+    name: Go vet, staticcheck, govulncheck and tests (against Floci)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Start Floci
+        run: |
+          docker compose -f infra/local/docker-compose.yml up -d
+          for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:${FLOCI_PORT}/_floci/health" >/dev/null && break; sleep 1; done
+      - run: go vet ./...
+        working-directory: backend
+      # Both tools are pinned and built from source by the Go module proxy (checksum-verified by the
+      # sum database), never @latest. govulncheck fails only on vulnerabilities the code reaches; the
+      # Go version in go.mod decides which standard library it scans, so keep that patch release current.
+      - name: staticcheck
+        working-directory: backend
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          "$(go env GOPATH)/bin/staticcheck" ./...
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      - run: go test ./...
+        working-directory: backend
+        env:
+          AWS_ENDPOINT_URL: http://localhost:${{ env.FLOCI_PORT }}
+      - if: always()
+        run: docker compose -f infra/local/docker-compose.yml down --volumes
+
+  processing:
+    name: Python processing lint, types and tests (against Floci)
+    needs: changes
+    if: needs.changes.outputs.processing == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/processing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/processing/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      # Known-vulnerability audit of the runtime dependencies (Pillow, pillow-heif and its bundled libheif/libde265).
+      - run: pip install pip-audit && pip-audit -r requirements.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - name: Start Floci
+        working-directory: .
+        run: |
+          docker compose -f infra/local/docker-compose.yml up -d
+          for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:${FLOCI_PORT}/_floci/health" >/dev/null && break; sleep 1; done
+      - run: pytest
+        env:
+          AWS_ENDPOINT_URL: http://localhost:${{ env.FLOCI_PORT }}
+      - if: always()
+        working-directory: .
+        run: docker compose -f infra/local/docker-compose.yml down --volumes
+
+  infra:
+    name: CDK synth and assertion tests
+    needs: changes
+    if: needs.changes.outputs.cdk == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5 # bundles the Go Lambda during synth
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: npm ci
+      # Known-vulnerability audit of the production dependencies; fails on high or critical.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run build
+      - run: npm test
+      - run: npx cdk synth --quiet
+        env:
+          CDK_DEFAULT_ACCOUNT: "000000000000"
+          BUDGET_ALERT_EMAIL: ci@example.com
+          CLOUDFRONT_PUBLIC_KEY_PROD: "-----BEGIN PUBLIC KEY-----\nCI\n-----END PUBLIC KEY-----"
+          CLOUDFRONT_PUBLIC_KEY_STG: "-----BEGIN PUBLIC KEY-----\nCI\n-----END PUBLIC KEY-----"
+
+  static:
+    name: Lint workflows and shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: actionlint (also runs shellcheck on workflow scripts)
+        run: |
+          # Pinned release, checked against its sha256 before it is unpacked.
+          curl -fsSL -o actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          echo "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
+      - name: shellcheck the wizard, local and repo scripts
+        run: shellcheck infra/scripts/*.sh scripts/*.sh
+      - name: No personal data in the tree (#72)
+        run: scripts/check-public-safe.sh
+
+  e2e:
+    name: Playwright e2e on the CDK app deployed to Floci
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # Lambdas are arm64; Floci runs them as arm64 containers, which needs QEMU on x64 runners.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            infra/package-lock.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: npm ci
+        working-directory: infra
+      - run: npm ci
+        working-directory: frontend
+      # Installed before the local stack: Floci and its Lambda containers must not be able to disturb the runner's DNS while apt runs.
+      - name: Resolve the Playwright version
+        id: playwright
+        working-directory: frontend
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium and its system dependencies (3 attempts; apt mirrors are flaky)
+        working-directory: frontend
+        run: |
+          for attempt in 1 2 3; do
+            npx playwright install --with-deps chromium && exit 0
+            echo "Playwright install failed (attempt ${attempt}/3)" >&2
+            [ "${attempt}" -lt 3 ] && sleep $((attempt * 20))
+          done
+          exit 1
+      - name: Bring up the local stack (Floci + CDK deploy + test Members)
+        run: bash infra/scripts/local-up.sh
+      - run: npm run e2e
+        working-directory: frontend
+        env:
+          SCREENSHOT_DIR: ${{ github.workspace }}/frontend/test-results/screenshots
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 14
+      - if: always()
+        run: bash infra/scripts/local-down.sh
+
+  # The one check the main ruleset requires. It always runs and fails if any job failed or was
+  # cancelled; a job skipped because the PR does not touch its area counts as passing.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [changes, frontend, backend, processing, infra, static, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"$RESULTS")
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
+          if [ -n "$bad" ]; then
+            echo "::error::These jobs did not pass: ${bad//$'\n'/, }"
+            exit 1
+          fi

@@ -1,0 +1,81 @@
+# Enables auto-merge on Dependabot minor and patch PRs. The merge itself waits for the required
+# checks in the `main` ruleset.
+#
+# Auto-merge is enabled with a GitHub App token, not GITHUB_TOKEN: a merge performed on behalf of
+# GITHUB_TOKEN starts no workflows, so CI on `main` and the staging deploy would never run. Setup is
+# manual; see "Auto-merge Dependabot updates" in infra/SETUP.md.
+#
+# Both App values are DEPENDABOT secrets (Settings, Secrets and variables, Dependabot), not Actions
+# secrets: a `pull_request` run that Dependabot triggers only sees Dependabot secrets. The trigger
+# must stay `pull_request`: a `pull_request_target` run gets Actions secrets instead, so it never saw
+# the App (proven on #68). Until the secrets exist the workflow skips auto-merge with a notice and
+# still succeeds. A run Luis triggers (pushing to a Dependabot branch) sees no Dependabot secrets
+# and skips the same way.
+#
+# github_actions updates are never auto-merged: they change code that runs inside the deploy jobs,
+# which hold the AWS role. Luis merges those by hand.
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# This workflow only reads (Dependabot's `pull_request` token is read-only anyway). Merging happens
+# with the App token below.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dependabot:
+    # The PR author, not github.actor: the actor is Luis when he reopens or rebases the PR.
+    # github_actions branches are skipped before any step runs: `pull_request` runs the workflow from
+    # the PR branch, so a bumped action in this file would otherwise run with the App key readable.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      !startsWith(github.head_ref, 'dependabot/github_actions/')
+    runs-on: ubuntu-latest
+    env:
+      APP_CONFIGURED: ${{ secrets.AUTOMERGE_APP_CLIENT_ID != '' && secrets.AUTOMERGE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Read Dependabot update type
+        id: metadata
+        uses: dependabot/fetch-metadata@08eff52bf64351f401fb50d4972fa95b9f2c2d1b # v2.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide whether to auto-merge
+        id: decide
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+        run: |
+          if [ "$ECOSYSTEM" = "github_actions" ]; then
+            echo "::notice::github_actions updates are merged by hand (they run inside the deploy jobs)."
+            echo "merge=false" >> "$GITHUB_OUTPUT"
+          elif [ "$UPDATE_TYPE" != "version-update:semver-minor" ] && [ "$UPDATE_TYPE" != "version-update:semver-patch" ]; then
+            echo "::notice::Update type '$UPDATE_TYPE' is not minor or patch; left for review."
+            echo "merge=false" >> "$GITHUB_OUTPUT"
+          elif [ "$APP_CONFIGURED" != "true" ]; then
+            echo "::notice::Auto-merge skipped: Dependabot secrets AUTOMERGE_APP_CLIENT_ID and AUTOMERGE_APP_PRIVATE_KEY are not set (see infra/SETUP.md)."
+            echo "merge=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "merge=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create App token
+        if: steps.decide.outputs.merge == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Enable auto-merge
+        if: steps.decide.outputs.merge == 'true'
+        run: gh pr merge --squash --auto "$PR_URL"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}

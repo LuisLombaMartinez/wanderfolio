@@ -1,0 +1,178 @@
+name: Deploy a stage
+
+# Reusable: deploys one stage (stg or prod) of the Album at one commit. Called by deploy-staging.yml
+# (after CI on main) and deploy-prod.yml (the manual button). See ADR-0006.
+#
+# Authenticates through the GitHub OIDC role created by infra/scripts/setup-wizard.sh; there are no
+# stored AWS keys. That role is shared by both stages and its trust policy matches the token claim
+#   sub = <repo prefix>:ref:refs/heads/main
+# where the prefix is the one GitHub reports for this repo (the immutable form, repo:owner@<id>/name@<id>,
+# on this repo); setup-wizard.sh stage 2 reads it from the API.
+# Both callers run on main (a workflow_run job and a workflow_dispatch from main both carry that
+# subject, and a called workflow gets the caller's claims). If any job here or in a caller ever gains an
+# `environment:`, the sub becomes repo:<owner>/<repo>:environment:<name> and the role's trust policy
+# (setup-wizard.sh stage 2) must be changed to match, or the deploy will fail to assume the role.
+#
+# Credentials are only held by the two jobs that need them (deploy, publish) and neither runs the
+# frontend's dependencies; the frontend is built in a job with no credentials in between.
+# Concurrency is set by the callers, one group per stage.
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: "stg or prod"
+        type: string
+        required: true
+      sha:
+        description: "The commit to deploy"
+        type: string
+        required: true
+    outputs:
+      site_url:
+        description: "The CloudFront address of the deployed stage"
+        value: ${{ jobs.publish.outputs.site_url }}
+
+permissions:
+  contents: read
+
+env:
+  STACK: ${{ inputs.stage == 'prod' && 'Viajecito' || 'ViajecitoStg' }}
+
+jobs:
+  deploy:
+    name: cdk deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # lets the job ask GitHub for the OIDC token
+    outputs:
+      user_pool_id: ${{ steps.outputs.outputs.user_pool_id }}
+      user_pool_client_id: ${{ steps.outputs.outputs.user_pool_client_id }}
+      site_bucket: ${{ steps.outputs.outputs.site_bucket }}
+      distribution_id: ${{ steps.outputs.outputs.distribution_id }}
+      distribution_domain: ${{ steps.outputs.outputs.distribution_domain }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      # Only the selected stage's settings are read (VIAJECITO_STAGE); the budget email is prod's alone.
+      VIAJECITO_STAGE: ${{ inputs.stage }}
+      BUDGET_ALERT_EMAIL: ${{ vars.BUDGET_ALERT_EMAIL }}
+      CLOUDFRONT_PUBLIC_KEY_STG: ${{ vars.CLOUDFRONT_PUBLIC_KEY_STG }}
+      CLOUDFRONT_PUBLIC_KEY_PROD: ${{ vars.CLOUDFRONT_PUBLIC_KEY_PROD }}
+    steps:
+      - name: Check the inputs
+        env:
+          STAGE: ${{ inputs.stage }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          case "$STAGE" in stg | prod) ;; *) echo "::error::stage must be stg or prod, got '$STAGE'"; exit 1 ;; esac
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full commit hash, got '$SHA'"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5 (bundles the Go Lambda during synth)
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Install before credentials exist, and without install scripts.
+      - run: npm ci --ignore-scripts
+        working-directory: infra
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy the stack
+        working-directory: infra
+        run: npx cdk deploy "$STACK" --require-approval never
+      - name: Read the stack outputs (fails if one is missing)
+        id: outputs
+        run: |
+          out() {
+            local v
+            v="$(aws cloudformation describe-stacks --stack-name "$STACK" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue | [0]" --output text)"
+            case "$v" in "" | None | null) echo "::error::stack output $1 is missing" >&2; return 1 ;; esac
+            printf '%s' "$v"
+          }
+          {
+            echo "user_pool_id=$(out UserPoolId)"
+            echo "user_pool_client_id=$(out UserPoolClientId)"
+            echo "site_bucket=$(out SiteBucketName)"
+            echo "distribution_id=$(out DistributionId)"
+            echo "distribution_domain=$(out DistributionDomainName)"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build the frontend (no AWS credentials)
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: bash infra/scripts/build-site.sh
+        env:
+          VITE_USER_POOL_ID: ${{ needs.deploy.outputs.user_pool_id }}
+          VITE_USER_POOL_CLIENT_ID: ${{ needs.deploy.outputs.user_pool_client_id }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: site-${{ inputs.stage }}
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Upload the site and invalidate CloudFront
+    needs: [deploy, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      site_url: ${{ steps.summary.outputs.site_url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: site-${{ inputs.stage }}
+          path: frontend/dist
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: bash infra/scripts/upload-site.sh
+        env:
+          SITE_BUCKET: ${{ needs.deploy.outputs.site_bucket }}
+          DISTRIBUTION_ID: ${{ needs.deploy.outputs.distribution_id }}
+      - name: Summary
+        id: summary
+        env:
+          STAGE: ${{ inputs.stage }}
+          SHA: ${{ inputs.sha }}
+          DOMAIN: ${{ needs.deploy.outputs.distribution_domain }}
+        run: |
+          echo "site_url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deployed ${STAGE}"
+            echo
+            echo "- Commit: \`${SHA}\`"
+            echo "- Stack: \`${STACK}\`"
+            echo "- Site: https://${DOMAIN}"
+          } >> "$GITHUB_STEP_SUMMARY"
