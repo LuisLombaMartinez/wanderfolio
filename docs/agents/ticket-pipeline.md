@@ -44,4 +44,5 @@ Shared research notes live in `~/.cache/viajecito-factory/notes/` (for example `
 - Run your layer's checks and leave them green before handing off.
 - Report each test run's pass, skip and fail counts in `handoff.md`. A skip is a failure unless the ticket explains it. (A silent `t.Skip` once hid a regression behind a green run.)
 - Commit on the ticket branch with the git config identity and the session's attribution line. Never push to `main`, merge, or force-push.
+- Coverage: CI measures coverage per language and fails below a floor (frontend `vite.config.ts`, Go `backend/scripts/coverage-check.sh`, Python `backend/processing/pyproject.toml`). A drop means the change needs tests; the fix is never lowering the floor. Raise a floor when coverage has gone up (round down to a whole percent, keep the "ratchet" comment). Lower one only with a note in the PR saying why.
 - Floci: use the port and resource namespace the orchestrator gives you, and stop your containers when you finish.

@@ -18,3 +18,14 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 strict = true
 mypy_path = "src"
 packages = ["viajecito_processing", "tests"]
+
+[tool.coverage.run]
+source = ["viajecito_processing"]
+branch = true
+
+[tool.coverage.report]
+# CI runs `pytest --cov`; a plain `pytest` (or a single test) does not measure or enforce this.
+# ratchet: raise when coverage goes up, never lower without a note in the PR.
+# Measured 2026-11-26: 94.06% (statements and branches together; floor rounded down).
+fail_under = 94
+show_missing = true
